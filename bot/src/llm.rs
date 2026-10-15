@@ -131,10 +131,19 @@ impl SpeechHook {
 
 /// 첫 응답(헤더)까지 기다리는 시간, 스트림이 멈춰 있어도 되는 시간
 const FIRST_BYTE: Duration = Duration::from_secs(20);
+/// 무료 두뇌는 빨리 포기하고 다음으로 — 한도에 걸린 무료 공급자에서 20초씩 기다리지 않게
+const FIRST_BYTE_FREE: Duration = Duration::from_secs(6);
 const IDLE: Duration = Duration::from_secs(20);
 
-async fn send_first(req: reqwest::RequestBuilder, body: &Value) -> Result<reqwest::Response> {
-    match tokio::time::timeout(FIRST_BYTE, req.json(body).send()).await {
+fn first_byte(p: &Preset) -> Duration {
+    if p.free { FIRST_BYTE_FREE } else { FIRST_BYTE }
+}
+
+/// 기본 출력 한도 — 말 1~2문장 + 글 1~4문장이면 충분하다(길면 비용·전체 생성 시간만 는다)
+const DEFAULT_MAX_TOKENS: u32 = 700;
+
+async fn send_first(req: reqwest::RequestBuilder, body: &Value, first: Duration) -> Result<reqwest::Response> {
+    match tokio::time::timeout(first, req.json(body).send()).await {
         Ok(r) => Ok(r?),
         Err(_) => bail!("응답 시작 시간 초과"),
     }
@@ -336,7 +345,7 @@ async fn call_anthropic(app: &AppRef, name: &str, p: &Preset, system: &str, line
     let model = p.model.as_str();
     let mut body = json!({
         "model": model,
-        "max_tokens": p.max_tokens.unwrap_or(1500),
+        "max_tokens": p.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
         "system": [{"type":"text","text": system}],
         "messages": [{"role":"user","content": content}],
         "stream": true,
@@ -364,7 +373,7 @@ async fn call_anthropic(app: &AppRef, name: &str, p: &Preset, system: &str, line
     }
     // 서버 쪽 모델 대체(beta)는 쓰지 않는다 — 한 요청에 여러 모델이 과금돼 하루 상한 정산이 어긋난다.
     // 거절·실패는 봇의 대체 체인(대체 두뇌 → 무료 체인)이 맡는다(SPEC F-32·F-34)
-    let mut r = send_first(req, &body).await?;
+    let mut r = send_first(req, &body, first_byte(p)).await?;
     let status = r.status();
     if !status.is_success() {
         let v: Value = r.json().await.unwrap_or(Value::Null);
@@ -443,7 +452,7 @@ async fn call_openai(app: &AppRef, name: &str, p: &Preset, system: &str, lines: 
         // 이 필드를 거부하는 서버면 프리셋에 stream_usage = false
         body["stream_options"] = json!({"include_usage": true});
     }
-    let max = p.max_tokens.unwrap_or(1500);
+    let max = p.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
     if p.provider == "openai" {
         // 추론 모델은 추론 토큰도 이 한도에 포함된다
         body["max_completion_tokens"] = json!(max);
@@ -466,7 +475,7 @@ async fn call_openai(app: &AppRef, name: &str, p: &Preset, system: &str, lines: 
         let key = std::env::var(p.key_env()).map_err(|_| anyhow!("{} 없음", p.key_env()))?;
         req = req.bearer_auth(key);
     }
-    let mut r = send_first(req, &body).await?;
+    let mut r = send_first(req, &body, first_byte(p)).await?;
     let status = r.status();
     // Groq 등은 남은 한도를 헤더로 준다 — SPEC F-35 "남은 무료 한도"
     let h = r.headers();
@@ -569,7 +578,7 @@ fn tokens_upper(chars: usize) -> f64 {
 }
 
 fn estimate_usd(p: &Preset, prompt_chars: usize) -> f64 {
-    let max_out = p.max_tokens.unwrap_or(1500) as f64;
+    let max_out = p.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS) as f64;
     // 캐시 쓰기 입력은 1.25배로 정산한다(Anthropic, OpenAI cache_write_tokens) — 입력 전부가 캐시 쓰기인 최악을 잡아야
     // 정산액이 예약액을 넘지 않는다
     let input_rate = p.price_in * 1.25;

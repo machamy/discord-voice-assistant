@@ -326,19 +326,17 @@ async def _edge_once(v: TtsVoice, text: str) -> bytes:
     return bytes(buf)
 
 
+# 공급자 → 이 시각까지 뒤로 미룸(회로 차단기)
+TTS_BROKEN: dict[str, float] = {}
+TTS_COOLDOWN = 60
+
+
 async def tts_edge(v: TtsVoice, text: str) -> np.ndarray:
     _patch_edge()
-    # 비공식 서비스라 가끔 한 번씩 연결이 끊긴다(2026-10-13 실측) — 느린 대체(melotts 첫 기동 20초+)로 넘어가기 전에 한 번 더.
-    # 받은 오디오가 깨져 디코딩이 실패하는 경우도 같이 재시도한다
-    async def once() -> np.ndarray:
-        data = await asyncio.wait_for(_edge_once(v, text), timeout=8)
-        return decode_to_pcm(data)
-
-    try:
-        return await once()
-    except Exception as e:
-        log.warning("edge-tts 재시도: %s", type(e).__name__)
-        return await once()
+    # 재시도하지 않는다 — 8초 제한을 두 번 기다리면 장애 때 대답이 16초 늦었다(2026-10-15 검토).
+    # 실패하면 바로 다음 공급자로 넘기고, 회로 차단기(tts())가 한동안 건너뛴다. MeloTTS는 시작 때 예열돼 있다
+    data = await asyncio.wait_for(_edge_once(v, text), timeout=6)
+    return decode_to_pcm(data)
 
 
 async def tts_azure(v: TtsVoice, text: str) -> np.ndarray:
@@ -476,7 +474,11 @@ async def tts(req: TtsReq):
     if not text:
         raise HTTPException(400, "빈 텍스트")
     errors = []
-    for v in req.chain:
+    # 회로 차단기: 최근 실패한 공급자는 TTS_COOLDOWN초 동안 뒤로 미룬다(매번 시간 초과를 기다리지 않게).
+    # 다 미뤄졌으면 미룬 것도 차례로 시도한다
+    now = time.time()
+    chain = sorted(req.chain, key=lambda v: TTS_BROKEN.get(v.provider, 0) > now)
+    for v in chain:
         fn = TTS.get(v.provider)
         if fn is None:
             errors.append({"provider": v.provider, "error": "지원하지 않음"})
@@ -487,8 +489,10 @@ async def tts(req: TtsReq):
             pcm = await asyncio.wait_for(fn(v, text), timeout=180 if v.provider == "melotts" else 25)
         except Exception as e:  # 공급자 오류·시간 초과·edge-tts 내부 예외 등 — 다음 공급자로
             errors.append({"provider": v.provider, "error": _err_kind(e)})
+            TTS_BROKEN[v.provider] = time.time() + TTS_COOLDOWN
             log.warning("tts %s 실패 %s", v.provider, type(e).__name__)  # 글 내용은 남기지 않는다
             continue
+        TTS_BROKEN.pop(v.provider, None)
         ms = int((time.perf_counter() - t) * 1000)
         log.info("tts %s %dms %d자", v.provider, ms, len(text))
         return Response(pcm_to_wav(pcm, OUT_SR), media_type="audio/wav",

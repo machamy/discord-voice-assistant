@@ -116,6 +116,22 @@ struct Handler {
     app: AppRef,
 }
 
+/// serenity가 모르는 게이트웨이 이벤트 — 음성 채널 이모지 반응(VOICE_CHANNEL_EFFECT_SEND)으로 캐릭터 부르기
+struct RawHandler {
+    app: AppRef,
+}
+
+#[async_trait]
+impl serenity::all::RawEventHandler for RawHandler {
+    async fn raw_event(&self, _ctx: Context, ev: serenity::all::Event) {
+        if let serenity::all::Event::Unknown(u) = ev {
+            if u.kind == "VOICE_CHANNEL_EFFECT_SEND" {
+                voice::on_voice_effect(&self.app, &u.value).await;
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
@@ -126,6 +142,24 @@ impl EventHandler for Handler {
         }
         tokio::spawn(commands::preload_voices(self.app.clone()));
         presence::refresh(&self.app).await;
+        // 재시작 전에 있던 음성 채널로 다시 들어간다(업데이트·재부팅 뒤 /들어와 없이) — 이미 세션이 있으면 건너뜀
+        let rejoin: Vec<(u64, u64)> = {
+            let st = self.app.store.lock().unwrap();
+            st.state.guilds.iter().filter_map(|(g, s)| s.voice_channel.filter(|&c| c != 0 && *g != 0).map(|c| (*g, c))).collect()
+        };
+        for (g, c) in rejoin {
+            let app = self.app.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                if app.sessions.lock().await.contains_key(&g) {
+                    return;
+                }
+                match voice::join(&app, serenity::all::GuildId::new(g), serenity::all::ChannelId::new(c), None).await {
+                    Ok(_) => tracing::info!("재시작 뒤 자동 재입장 guild={g} channel={c}"),
+                    Err(e) => tracing::warn!("자동 재입장 실패 guild={g}: {e}"),
+                }
+            });
+        }
     }
 
     async fn guild_create(&self, ctx: Context, guild: Guild, is_new: Option<bool>) {
@@ -195,6 +229,7 @@ async fn main() -> Result<()> {
     let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_VOICE_STATES;
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler { app: app.clone() })
+        .raw_event_handler(RawHandler { app: app.clone() })
         .register_songbird_with(songbird)
         .await?;
     let shard = client.shard_manager.clone();

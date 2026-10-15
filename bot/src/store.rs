@@ -23,6 +23,8 @@ pub struct State {
     pub usage: BTreeMap<String, DayUsage>,
     /// 웹 콘솔 호출어 사전 — 캐릭터 → config 호출어에 더할 받아쓰기 변형
     pub wake_extra: BTreeMap<String, Vec<String>>,
+    /// 위험 별칭 — 평소에도 쓰는 말로 받아써진 이름(실장·약정). 헤이·부르는 꼴·맨 앞 질문일 때만 호출
+    pub wake_risky: BTreeMap<String, Vec<String>>,
     /// 받아쓰기 힌트(로컬 whisper hotwords) — 웹 콘솔에서 켬. 짧은 소리에 호출어를 지어내므로 min_ms 이상 발화에만
     pub stt_hint: SttHint,
 }
@@ -69,6 +71,8 @@ pub struct GuildState {
     pub greeting_on: Option<bool>,
     /// 인사 내용(없으면 config [notice] voice)
     pub greeting: Option<String>,
+    /// 지금 들어가 있는 음성 채널 — 봇이 재시작되면 여기로 다시 들어간다(나가기·끊김이면 지움)
+    pub voice_channel: Option<u64>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

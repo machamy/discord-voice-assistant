@@ -169,6 +169,8 @@ pub struct WakeHit {
     pub character: String,
     /// 호출어 뒤에 붙은 말(같은 발화) — SPEC F-21
     pub rest: String,
+    /// 판정 근거 — 이름 / 헤이 / 비슷한 말 / 위험 별칭(받아쓰기 상황·지연 기록에 보여 준다)
+    pub via: &'static str,
 }
 
 pub struct Wake {
@@ -178,6 +180,8 @@ pub struct Wake {
     canon: Vec<(String, Vec<Jamo>)>,
     /// 헤이(접두어) + 바로 붙은 한글 두 글자
     hey_re: Option<Regex>,
+    /// 위험 별칭(실장·약정처럼 평소에도 쓰는 말로 받아써진 이름) — 헤이·부르는 꼴·맨 앞 질문일 때만 인정
+    risky: Vec<(String, Regex)>,
 }
 
 /// 받아쓰기가 "헤이"를 적는 모양 — 헤이·해이·에이·Hey
@@ -325,7 +329,17 @@ impl Wake {
             .filter_map(|(k, words)| words.first().and_then(|w| jamo(w)).filter(|j| j.len() == 2).map(|j| (k.clone(), j)))
             .collect();
         let hey_re = Regex::new(&format!(r"(?:^|[^\p{{L}}\p{{N}}])({HEY})[^\p{{L}}\p{{N}}]*(\p{{Hangul}}{{2}})")).ok();
-        Self { pats, canon, hey_re }
+        Self { pats, canon, hey_re, risky: vec![] }
+    }
+
+    /// 위험 별칭을 붙인다(캐릭터 키, 낱말들)
+    pub fn with_risky(mut self, risky: &[(String, Vec<String>)]) -> Self {
+        self.risky = risky
+            .iter()
+            .filter(|(_, w)| !w.is_empty())
+            .filter_map(|(k, w)| Self::build(w, false).ok().map(|re| (k.clone(), re)))
+            .collect();
+        self
     }
 
     /// 헤이 바로 뒤 한글 두 글자가 대표 이름과 비슷하면 그 캐릭터 — (시작, 끝, 키)
@@ -359,7 +373,7 @@ impl Wake {
     /// 가장 앞에 나온 호출어를 고른다. hey_only면 헤이를 붙여 부른 것만.
     /// 사전(정확한 호출어)에 없으면 헤이 바로 뒤의 비슷한 말("헤이 야쩡", "에이클잖")도 본다
     pub fn find(&self, text: &str, hey_only: bool) -> Option<WakeHit> {
-        let mut best: Option<(usize, usize, &String)> = None;
+        let mut best: Option<(usize, usize, &String, &'static str)> = None;
         for (k, plain, hey) in &self.pats {
             let re = if hey_only { hey } else { plain };
             // 헤이를 붙였으면 부른 것. 아니면 이름이 부르는 자리에 있을 때만(이야기 속 언급은 건너뛰고 다음 것을 본다)
@@ -367,21 +381,47 @@ impl Wake {
                 let (all, name) = (c.get(0)?, c.get(2)?);
                 // "에이"는 감탄사로도 흔하다 — "에이 클짱도 그건 모르지"처럼 이름에 조사가 붙으면 언급으로 본다
                 let hey = c.get(1).is_some_and(|h| h.as_str() != "에이" || !PARTICLES.iter().any(|p| text[name.end()..].starts_with(p)));
-                (hey_only || hey || is_called(text, name.start(), name.end())).then(|| (all.start(), name.end()))
+                if hey_only || hey {
+                    Some((all.start(), name.end(), "헤이"))
+                } else {
+                    is_called(text, name.start(), name.end()).then(|| (all.start(), name.end(), "이름"))
+                }
             });
-            if let Some((s, e)) = hit {
+            if let Some((s, e, via)) = hit {
                 if best.is_none_or(|b| s < b.0) {
-                    best = Some((s, e, k));
+                    best = Some((s, e, k, via));
                 }
             }
         }
-        if let Some(f) = self.fuzzy(text) {
-            if best.is_none_or(|b| f.0 < b.0) {
-                best = Some(f);
+        if let Some((s, e, k)) = self.fuzzy(text) {
+            if best.is_none_or(|b| s < b.0) {
+                best = Some((s, e, k, "비슷한 말"));
             }
         }
-        let (_, end, k) = best?;
-        Some(WakeHit { character: k.clone(), rest: rest_after(text, end) })
+        // 위험 별칭 — 헤이를 붙였거나, 바로 '아/야'로 부르거나, 맨 앞에서 너에게 묻는 말("실장 나에 대해서 어떻게 생각해?")일 때만
+        for (k, re) in &self.risky {
+            let hit = re.captures_iter(text).find_map(|c| {
+                let (all, name) = (c.get(0)?, c.get(2)?);
+                let after = &text[name.end()..];
+                let hey = c.get(1).is_some_and(|h| h.as_str() != "에이") && !PARTICLES.iter().any(|p| after.starts_with(p));
+                let voc = ["아", "야"].iter().any(|v| after.strip_prefix(v).is_some_and(|r| r.chars().next().is_none_or(|ch| !ch.is_alphanumeric())));
+                let pre_empty = text[..name.start()].trim_matches(|ch: char| !ch.is_alphanumeric()).is_empty();
+                // 너에게 묻는 말 — 낱말 단위로(“너무”는 아님)
+                const YOU: [&str; 10] = ["너", "니가", "넌", "네가", "너는", "너도", "너가", "나랑", "나한테", "너한테"];
+                let asks = text.trim_end().ends_with('?') || after.split_whitespace().any(|w| YOU.contains(&w.trim_matches(|ch: char| !ch.is_alphanumeric())));
+                let particle = PARTICLES.iter().any(|p| after.starts_with(p));
+                // 헤이만 모드면 진짜 헤이(에이 제외)가 있어야
+                let ok = if hey_only { hey } else { hey || voc || (pre_empty && asks && !particle) };
+                ok.then(|| (all.start(), name.end()))
+            });
+            if let Some((s, e)) = hit {
+                if best.is_none_or(|b| s < b.0) {
+                    best = Some((s, e, k, "위험 별칭"));
+                }
+            }
+        }
+        let (_, end, k, via) = best?;
+        Some(WakeHit { character: k.clone(), rest: rest_after(text, end), via })
     }
 }
 
@@ -495,6 +535,22 @@ mod tests {
         }
         // 이름만 부르는 기본 모드에선 그대로 걸린다
         assert!(wk.find("클짱 몇 시야", false).is_some());
+    }
+
+    #[test]
+    fn risky_aliases() {
+        let wk = w().with_risky(&[("클짱".into(), vec!["실장".into(), "약정".into()])]);
+        for t in ["실장 나에 대해서 어떻게 생각해?", "헤이 실장 뭐해", "실장아 이거 봐", "실장 너 롤 잘해"] {
+            let h = wk.find(t, false).unwrap_or_else(|| panic!("{t}"));
+            assert_eq!((h.character.as_str(), h.via), ("클짱", "위험 별칭"), "{t}");
+        }
+        for t in ["실장 회의 들어가셨대", "우리 실장님이 그러는데", "약정 기간 끝났어", "실장이 뭐래?", "실장 너무 바쁘대", "약정 너무 비싸"] {
+            assert!(wk.find(t, false).is_none(), "{t}");
+        }
+        // 헤이만 모드: 진짜 헤이만(에이·부르는 꼴만으로는 안 됨)
+        assert!(wk.find("헤이 실장 뭐해", true).is_some());
+        assert!(wk.find("에이 실장아 뭐해", true).is_none());
+        assert!(wk.find("실장아 뭐해", true).is_none());
     }
 
     #[test]

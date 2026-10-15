@@ -140,7 +140,8 @@ pub fn definitions(app: &AppRef) -> Vec<CreateCommand> {
                 sub("호출어", "[주인] 부르는 말 추가·빼기(모든 서버 공통) — 비우면 목록")
                     .add_sub_option(char_opt(app))
                     .add_sub_option(CreateCommandOption::new(CommandOptionType::String, "추가", "예: 클로드, 오케이 클짱, 받아쓰기가 적은 변형").max_length(20))
-                    .add_sub_option(CreateCommandOption::new(CommandOptionType::String, "빼기", "추가했던 호출어").max_length(20)),
+                    .add_sub_option(CreateCommandOption::new(CommandOptionType::String, "빼기", "추가했던 호출어").max_length(20))
+                    .add_sub_option(CreateCommandOption::new(CommandOptionType::Boolean, "위험", "실장·약정처럼 평소 쓰는 말이면 켬 — 헤이·부르는 꼴일 때만 호출")),
             )
             .add_option(sub("초기화", "캐릭터 설정을 config.toml 기본값으로").add_sub_option(char_opt(app))),
     ]
@@ -241,6 +242,10 @@ fn check_preset(app: &AppRef, cmd: &CommandInteraction, name: &str, allow_none: 
     }
     if p.trains_on_input && !is_owner(app, cmd) {
         return Err(format!("'{name}'은(는) 입력을 학습에 쓰는 무료 등급이라 주인만 켤 수 있어요."));
+    }
+    // 유료 두뇌는 서버 관리 권한이 있어야 — 친구 한 명이 비싼 모델을 서버 기본으로 바꿔 두는 비용 위험(2026-10-15 검토)
+    if !p.free && !can_manage(app, cmd) {
+        return Err(format!("'{name}'은(는) 유료라 주인이나 서버 관리자만 고를 수 있어요. 무료 두뇌는 누구나 돼요."));
     }
     // 골라 놓고 대답마다 조용히 대체로 넘어가는 일이 없게 — 지금 못 쓰는 프리셋은 받지 않는다
     if !p.has_key() {
@@ -671,13 +676,22 @@ async fn settings_cmd(app: &AppRef, ctx: &Context, cmd: &CommandInteraction, gui
                 return reply(ctx, cmd, OWNER_ONLY, true).await;
             }
             let Some(ch) = opt_str(sub, "캐릭터").map(str::to_string) else { return reply(ctx, cmd, BAD_OPT, true).await };
-            let mut words = app.store.lock().unwrap().state.wake_extra.get(&ch).cloned().unwrap_or_default();
+            let risky = opt_bool(sub, "위험").unwrap_or(false);
+            let mut words = {
+                let st = app.store.lock().unwrap();
+                let map = if risky { &st.state.wake_risky } else { &st.state.wake_extra };
+                map.get(&ch).cloned().unwrap_or_default()
+            };
             let add = opt_str(sub, "추가").map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "));
             let del = opt_str(sub, "빼기").map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "));
             if add.is_none() && del.is_none() {
                 let base = app.cfg().characters.get(&ch).map(|c| c.wake.join(", ")).unwrap_or_default();
-                let extra = if words.is_empty() { "없음".to_string() } else { words.join(", ") };
-                return reply(ctx, cmd, fit(&format!("📣 **{ch}** 호출어\n기본: {base}\n추가: {extra}"), 1900), true).await;
+                let (extra, risk) = {
+                    let st = app.store.lock().unwrap();
+                    let j = |m: &std::collections::BTreeMap<String, Vec<String>>| m.get(&ch).filter(|v| !v.is_empty()).map(|v| v.join(", ")).unwrap_or_else(|| "없음".into());
+                    (j(&st.state.wake_extra), j(&st.state.wake_risky))
+                };
+                return reply(ctx, cmd, fit(&format!("📣 **{ch}** 호출어\n기본: {base}\n추가: {extra}\n위험 별칭: {risk}"), 1900), true).await;
             }
             if let Some(a) = add {
                 words.push(a);
@@ -685,8 +699,9 @@ async fn settings_cmd(app: &AppRef, ctx: &Context, cmd: &CommandInteraction, gui
             if let Some(d) = del {
                 words.retain(|w| w != &d);
             }
-            match voice::set_wake_extra(app, &ch, &words).await {
-                Ok(w) => format!("📣 {ch} 추가 호출어: {}", if w.is_empty() { "없음".into() } else { w.join(", ") }),
+            let r = if risky { voice::set_wake_risky(app, &ch, &words).await } else { voice::set_wake_extra(app, &ch, &words).await };
+            match r {
+                Ok(w) => format!("📣 {ch} {}: {}", if risky { "위험 별칭" } else { "추가 호출어" }, if w.is_empty() { "없음".into() } else { w.join(", ") }),
                 Err(e) => return reply(ctx, cmd, format!("❌ {e}"), true).await,
             }
         }
@@ -894,7 +909,7 @@ pub fn help_embed(app: &AppRef, hey_only: bool) -> CreateEmbed {
     let how = if hey_only {
         "\"헤이 클짱, 오늘 저녁 뭐 먹지?\"처럼 **헤이를 붙여** 부르면 대답해요(이 서버는 `/설정 호출방식` 헤이만)."
     } else {
-        "\"클짱, 오늘 저녁 뭐 먹지?\"처럼 이름을 부르면 대답해요. \"헤이 클짱\"도 돼요."
+        "\"클짱, 오늘 저녁 뭐 먹지?\"처럼 이름을 부르면 대답해요. \"헤이 클짱\"도 돼요. 음성 채널에서 🧡(클짱)·🩵(아짱) 이모지 반응을 누르고 말해도 돼요."
     };
     CreateEmbed::new()
         .title("📖 아짱·클짱 쓰는 법")

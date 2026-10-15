@@ -41,12 +41,65 @@ struct Utterance {
 }
 
 pub struct Job {
+    /// 세션 안 호출 번호 — 같은 사람·캐릭터의 새 호출이 오면 옛 대답 음성을 버리는 기준
+    pub id: u64,
     pub char_key: String,
     pub user: u64,
     pub caller: String,
     pub question: String,
+    /// 말이 끝난 시각(지연 기준점)
     pub t0: Instant,
+    /// 부른 순간의 대화(질문 줄 제외) — 대기하는 동안 나온 대화가 섞이지 않게
+    pub lines: Vec<crate::convo::Line>,
+    /// 호출 판정 근거
+    pub via: &'static str,
+    pub stt_wait_ms: u64,
+    pub stt_ms: u64,
+    pub queued: Instant,
 }
+
+/// 재생 대기열 한 칸 — 대답 처리기는 음성을 만들어 넣기만 하고 다음 호출로 넘어간다(재생 끝까지 기다리지 않음)
+struct Audio {
+    wav: Vec<u8>,
+    key: (u64, String),
+    job: Option<u64>,
+    tl: Option<Arc<Mutex<Timeline>>>,
+    at: Instant,
+}
+
+/// 호출 하나의 단계별 지연(웹 콘솔 "호출별 지연") — 이름 등 개인정보는 담지 않는다
+#[derive(Clone, Default, serde::Serialize)]
+pub struct Timeline {
+    pub time: String,
+    pub character: String,
+    pub via: String,
+    pub preset: String,
+    /// 말 끝 → 받아쓰기 시작
+    pub stt_wait_ms: u64,
+    pub stt_ms: u64,
+    /// 호출 → 대답 처리 시작
+    pub answer_wait_ms: u64,
+    /// 대답 처리 시작 → 두뇌 첫 문장(말)
+    pub llm_speech_ms: Option<u64>,
+    pub llm_ms: u64,
+    pub tts_ms: u64,
+    /// 음성 준비 → 재생 시작(앞 대답 재생 대기)
+    pub play_wait_ms: u64,
+    /// 말 끝 → 재생 시작(첫 소리)
+    pub total_ms: u64,
+    pub result: String,
+    #[serde(skip)]
+    parts: u8,
+    /// 말 끝 시각(첫 소리 지연 기준점)
+    #[serde(skip)]
+    t0: Option<Instant>,
+}
+
+/// 대답 프롬프트에 넣는 최근 대화 길이(분) — 버퍼는 기억 시간만큼 두되 두뇌엔 최근 것만
+const PROMPT_MINUTES: u64 = 5;
+
+/// 같은 호출의 오래된 대답 음성은 버린다(말 끝에서 이만큼 지나면)
+const STALE_AUDIO: Duration = Duration::from_secs(45);
 
 struct Playing {
     key: (u64, String),
@@ -66,6 +119,12 @@ pub struct SessionStats {
     pub rx_frames: u64,
     pub rx_unknown: u64,
     pub rx_blocked: u64,
+    /// 잡음 버림 사유 — 짧아서 / 작아서 / 받아쓰기 대기열이 가득 차서
+    pub dropped_short: u64,
+    pub dropped_quiet: u64,
+    pub dropped_queue: u64,
+    /// 새 호출이나 오래돼서 버린 대답 음성
+    pub stale_audio: u64,
 }
 
 pub struct Session {
@@ -81,6 +140,11 @@ pub struct Session {
     segs: Mutex<HashMap<u32, Seg>>,
     utt_tx: mpsc::Sender<Utterance>,
     job_tx: mpsc::Sender<Job>,
+    audio_tx: mpsc::Sender<Audio>,
+    next_job: std::sync::atomic::AtomicU64,
+    latest: Mutex<HashMap<(u64, String), u64>>,
+    pub timelines: Mutex<std::collections::VecDeque<Timeline>>,
+    emoji_last: Mutex<HashMap<u64, Instant>>,
     current: Mutex<Option<Playing>>,
     pending: Mutex<HashMap<u64, (String, Instant)>>,
     wake: RwLock<Wake>,
@@ -91,6 +155,35 @@ pub struct Session {
 /// 추가 호출어(전역) 바꾸기 — 웹 콘솔·`/설정 호출어` 공통. 부르는 이름("클로드")이든 받아쓰기 변형("실장")이든 된다.
 /// 띄어쓰기가 있는 말도 되고(받아쓰기 띄어쓰기는 무시), 바로 모든 세션에 반영한다
 pub async fn set_wake_extra(app: &AppRef, character: &str, words: &[String]) -> std::result::Result<Vec<String>, String> {
+    set_wake_words(app, character, words, false).await
+}
+
+/// 위험 별칭(전역) 바꾸기 — set_wake_extra와 같은 검증
+pub async fn set_wake_risky(app: &AppRef, character: &str, words: &[String]) -> std::result::Result<Vec<String>, String> {
+    set_wake_words(app, character, words, true).await
+}
+
+async fn set_wake_words(app: &AppRef, character: &str, words: &[String], risky: bool) -> std::result::Result<Vec<String>, String> {
+    let out = check_wake_words(app, character, words)?;
+    {
+        let mut st = app.store.lock().unwrap();
+        let map = if risky { &mut st.state.wake_risky } else { &mut st.state.wake_extra };
+        if out.is_empty() {
+            map.remove(character);
+        } else {
+            map.insert(character.to_string(), out.clone());
+        }
+    }
+    app.save_store();
+    let sessions: Vec<_> = app.sessions.lock().await.values().cloned().collect();
+    for s in sessions {
+        s.reload_wake(app);
+    }
+    Ok(out)
+}
+
+/// 호출어 목록 검증만(저장 안 함) — 웹에서 추가·위험 두 목록을 함께 바꿀 때 둘 다 먼저 검증해 일부만 바뀌지 않게
+pub fn check_wake_words(app: &AppRef, character: &str, words: &[String]) -> std::result::Result<Vec<String>, String> {
     let cfg = app.cfg();
     let Some(ch) = cfg.characters.get(character) else { return Err("없는 캐릭터예요".into()) };
     let mut out: Vec<String> = Vec::new();
@@ -114,26 +207,16 @@ pub async fn set_wake_extra(app: &AppRef, character: &str, words: &[String]) -> 
     if crate::convo::Wake::compile(&all).is_err() {
         return Err("호출어로 쓸 수 없는 글자가 있어요".into());
     }
-    {
-        let mut st = app.store.lock().unwrap();
-        if out.is_empty() {
-            st.state.wake_extra.remove(character);
-        } else {
-            st.state.wake_extra.insert(character.to_string(), out.clone());
-        }
-    }
-    app.save_store();
-    let sessions: Vec<_> = app.sessions.lock().await.values().cloned().collect();
-    for s in sessions {
-        s.reload_wake(app);
-    }
     Ok(out)
 }
 
 /// config 호출어(첫 번째가 대표 이름) + 웹 콘솔 호출어 사전
 pub fn build_wake(app: &AppRef) -> Wake {
     let cfg = app.cfg();
-    let extra = app.store.lock().unwrap().state.wake_extra.clone();
+    let (extra, risky) = {
+        let st = app.store.lock().unwrap();
+        (st.state.wake_extra.clone(), st.state.wake_risky.clone())
+    };
     let list: Vec<(String, Vec<String>)> = cfg
         .characters
         .iter()
@@ -147,7 +230,8 @@ pub fn build_wake(app: &AppRef) -> Wake {
             (k.clone(), w)
         })
         .collect();
-    Wake::new(&list)
+    let risky: Vec<(String, Vec<String>)> = risky.into_iter().filter(|(k, _)| cfg.characters.contains_key(k)).collect();
+    Wake::new(&list).with_risky(&risky)
 }
 
 impl Session {
@@ -229,7 +313,9 @@ impl Session {
         out
     }
 
-    fn enqueue(&self, job: Job) {
+    fn enqueue(&self, mut job: Job) {
+        job.id = self.next_job.fetch_add(1, Ordering::Relaxed) + 1;
+        let (latest_key, latest_id) = ((job.user, job.char_key.clone()), job.id);
         // 같은 사람이 같은 캐릭터를 다시 부르면 지금 대답을 끊는다 — SPEC F-24
         if let Some(p) = self.current.lock().unwrap().as_ref() {
             if p.key == (job.user, job.char_key.clone()) {
@@ -238,8 +324,17 @@ impl Session {
         }
         self.stats.lock().unwrap().wakes += 1;
         // 대답 대기열은 8개까지 — 넘치면 이번 호출은 버린다(메모리 무한 증가 방지)
+        let (character, via) = (job.char_key.clone(), job.via.to_string());
         if self.job_tx.try_send(job).is_err() {
             tracing::warn!("대답 대기열이 가득 차 호출 하나를 버림");
+            let mut q = self.timelines.lock().unwrap();
+            q.push_back(Timeline { time: crate::convo::now_kst(), character, via, result: "대답 대기열 가득".into(), ..Default::default() });
+            while q.len() > 30 {
+                q.pop_front();
+            }
+        } else {
+            // 같은 사람·캐릭터의 대기 중인 옛 대답 음성은 재생하지 않는다(재생 작업이 latest를 보고 버림) — 실제로 들어간 호출만
+            self.latest.lock().unwrap().insert(latest_key, latest_id);
         }
     }
 }
@@ -336,15 +431,27 @@ impl Receiver {
             let n = seg.pcm.len() as u64;
             let level = if n > 0 { seg.abs_sum / n } else { 0 };
             if n < lc.min_utterance_ms * 16 || level < lc.min_level as u64 {
-                sess.stats.lock().unwrap().dropped_noise += 1;
+                let short = n < lc.min_utterance_ms * 16;
+                {
+                    let mut st = sess.stats.lock().unwrap();
+                    st.dropped_noise += 1;
+                    if short {
+                        st.dropped_short += 1;
+                    } else {
+                        st.dropped_quiet += 1;
+                    }
+                }
                 // 판정과 기록을 버퍼 잠금 안에서 — 조용해서 끝난 조각은 그새 무시·주인 퇴장이 있었을 수 있다
-                log_stt(app, sess, seg.user, "noise", n / 16, 0, "", 0);
+                log_stt(app, sess, seg.user, if short { "short" } else { "quiet" }, n / 16, 0, "", 0);
                 continue;
             }
             let ended = Instant::now() - Duration::from_millis(seg.silence_ticks as u64 * 20);
             sess.stats.lock().unwrap().utterances += 1;
+            let (user, audio_ms) = (seg.user, n / 16);
             if sess.utt_tx.try_send(Utterance { user: seg.user, pcm: seg.pcm, ended }).is_err() {
                 tracing::warn!("받아쓰기 대기열이 가득 차 발화 하나를 버림");
+                sess.stats.lock().unwrap().dropped_queue += 1;
+                log_stt(app, sess, user, "queue", audio_ms, 0, "", 0);
             }
         }
     }
@@ -460,6 +567,7 @@ fn log_stt(app: &AppRef, sess: &Session, user: u64, kind: &'static str, audio_ms
 async fn stt_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<Utterance>) {
     while let Some(u) = rx.recv().await {
         let audio_ms = u.pcm.len() as u64 / 16;
+        let stt_wait_ms = u.ended.elapsed().as_millis() as u64;
         if !app.sidecar.lock().unwrap().ok {
             sess.stats.lock().unwrap().stt_failed += 1;
             log_stt(&app, &sess, u.user, "failed", audio_ms, 0, "사이드카 꺼짐", 0);
@@ -486,7 +594,7 @@ async fn stt_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<Utte
                     continue;
                 }
                 let text = r.text.trim();
-                if let Some(wake) = handle_text(&app, &sess, u.user, text, u.ended) {
+                if let Some(wake) = handle_text(&app, &sess, u.user, text, u.ended, stt_wait_ms, r.ms) {
                     let name = speaker_name(&sess, u.user);
                     let mut b = sess.buffer.lock().unwrap();
                     if sess.allowed(&app, u.user) == Some(true) && sess.listening.load(Ordering::Relaxed) {
@@ -504,7 +612,7 @@ async fn stt_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<Utte
 }
 
 /// 버퍼에 넣고 호출어를 본다. None = 버림(그새 무시됨), Some(부른 캐릭터 — 없으면 None)
-fn handle_text(app: &AppRef, sess: &Arc<Session>, user: u64, text: &str, ended: Instant) -> Option<Option<String>> {
+fn handle_text(app: &AppRef, sess: &Arc<Session>, user: u64, text: &str, ended: Instant, stt_wait_ms: u64, stt_ms: u64) -> Option<Option<String>> {
     let name = sess
         .participants
         .lock()
@@ -526,22 +634,47 @@ fn handle_text(app: &AppRef, sess: &Arc<Session>, user: u64, text: &str, ended: 
     let hit = sess.wake.read().unwrap().find(text, hey_only);
     // 호출어만 말하고 끊었던 사람의 다음 발화 = 질문 — SPEC F-21
     let pend = sess.pending.lock().unwrap().remove(&user);
+    // 부른 순간의 대화를 고정한다 — 질문 줄(방금 넣은 이 발화)은 빼고
+    let snapshot = || {
+        let mut v = sess.buffer.lock().unwrap().snapshot(sess.keep(app));
+        if let Some(pos) = v.iter().rposition(|l| l.user == user && l.text == text) {
+            v.remove(pos);
+        }
+        v
+    };
+    let job = |char_key: String, question: String, via: &'static str, lines| Job {
+        id: 0,
+        char_key,
+        user,
+        caller: name.clone(),
+        question,
+        t0: ended,
+        lines,
+        via,
+        stt_wait_ms,
+        stt_ms,
+        queued: Instant::now(),
+    };
     if let (None, Some((ch, until))) = (&hit, pend) {
         if Instant::now() <= until {
-            sess.enqueue(Job { char_key: ch.clone(), user, caller: name, question: text.to_string(), t0: ended });
-            return Some(Some(ch));
+            sess.enqueue(job(ch.clone(), text.to_string(), "이어서", snapshot()));
+            return Some(Some(format!("{ch}(이어서)")));
         }
     }
     let Some(h) = hit else { return Some(None) };
     let ch = h.character.clone();
+    let wake_note = format!("{ch}({})", h.via);
     if !h.rest.is_empty() {
-        sess.enqueue(Job { char_key: h.character, user, caller: name, question: h.rest, t0: ended });
+        sess.enqueue(job(h.character, h.rest, h.via, snapshot()));
+    } else if matches!(h.via, "비슷한 말" | "위험 별칭") {
+        // 불확실한 판정(비슷한 말·위험 별칭)으로 이름만 들렸을 땐 다음 말을 질문으로 받지 않는다 —
+        // 이름 오인 한 번이 다음 정상 발화까지 오호출로 번진다(2026-10-15 검토)
     } else {
         let secs = app.cfg().listen.followup_secs.clamp(1, 120);
         let until = Instant::now().checked_add(Duration::from_secs(secs)).unwrap_or_else(Instant::now);
         sess.pending.lock().unwrap().insert(user, (h.character, until));
     }
-    Some(Some(ch))
+    Some(Some(wake_note))
 }
 
 // ------------------------------------------------------------------ 대답
@@ -558,8 +691,64 @@ impl VoiceEventHandler for EndNotify {
     }
 }
 
-/// WAV를 재생하고 끝날 때까지 기다린다
-async fn play(app: &AppRef, sess: &Arc<Session>, wav: Vec<u8>, key: (u64, String)) -> Result<()> {
+/// 재생 작업 — 대기열의 음성을 차례로 재생한다. 새 호출로 밀린 대답·오래된 대답은 버린다
+async fn player(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<Audio>) {
+    while let Some(a) = rx.recv().await {
+        let superseded = a.job.is_some_and(|id| sess.latest.lock().unwrap().get(&a.key).is_some_and(|&l| l > id));
+        let stale = a.tl.as_ref().is_some_and(|t| t.lock().unwrap().t0.is_some_and(|t0| t0.elapsed() > STALE_AUDIO));
+        if superseded || stale {
+            sess.stats.lock().unwrap().stale_audio += 1;
+            if let Some(tl) = &a.tl {
+                finish_part(&sess, tl, |t| set_result(t, if superseded { "새 호출로 취소" } else { "오래돼서 버림" }));
+            }
+            continue;
+        }
+        if let Some(tl) = &a.tl {
+            let wait = a.at.elapsed().as_millis() as u64;
+            let mut total = 0;
+            finish_part(&sess, tl, |t| {
+                t.play_wait_ms = wait;
+                total = t.t0.map(|t0| t0.elapsed().as_millis() as u64).unwrap_or(0);
+                t.total_ms = total;
+            });
+            if total > 0 {
+                app.record_latency(total);
+            }
+        }
+        let _ = play(&app, &sess, a.wav, a.key, a.job).await;
+    }
+}
+
+/// 결과는 먼저 정해진 것을 지킨다 — 재생 작업이 "새 호출로 취소"라고 적었으면 대답 처리기가 "대답"으로 덮지 않게
+fn set_result(t: &mut Timeline, r: &str) {
+    if t.result.is_empty() {
+        t.result = r.to_string();
+    }
+}
+
+/// 타임라인 조각을 채운다 — 대답 처리기와 재생 작업이 각각 한 번씩, 둘 다 끝나면 기록·로그
+fn finish_part(sess: &Session, tl: &Arc<Mutex<Timeline>>, f: impl FnOnce(&mut Timeline)) {
+    let done = {
+        let mut t = tl.lock().unwrap();
+        f(&mut t);
+        t.parts += 1;
+        (t.parts >= 2).then(|| t.clone())
+    };
+    if let Some(t) = done {
+        tracing::info!(
+            "호출 {}({}) 받아쓰기대기={} 받아쓰기={} 대답대기={} 첫문장={:?} 두뇌={} tts={} 재생대기={} 첫소리={}ms {} {}",
+            t.character, t.via, t.stt_wait_ms, t.stt_ms, t.answer_wait_ms, t.llm_speech_ms, t.llm_ms, t.tts_ms, t.play_wait_ms, t.total_ms, t.preset, t.result
+        );
+        let mut q = sess.timelines.lock().unwrap();
+        q.push_back(t);
+        while q.len() > 30 {
+            q.pop_front();
+        }
+    }
+}
+
+/// WAV를 재생하고 끝날 때까지 기다린다(재생 작업 안에서만 부른다)
+async fn play(app: &AppRef, sess: &Arc<Session>, wav: Vec<u8>, key: (u64, String), job: Option<u64>) -> Result<()> {
     let (tx, rx) = oneshot::channel();
     // 서버별 음량(`/설정 음량`, 100% = 원래 크기)
     let vol = app.volume(sess.guild.get()) as f32 / 100.0;
@@ -575,6 +764,11 @@ async fn play(app: &AppRef, sess: &Arc<Session>, wav: Vec<u8>, key: (u64, String
     // 대답(부른 사람이 있는 재생)만 "진행 중 대답"으로 기록한다 — 고지·미리 듣기가 덮어쓰지 않게(SPEC F-24)
     let is_answer = key.0 != 0;
     if is_answer {
+        // 재생을 걸어 둔 사이 같은 사람·캐릭터의 새 호출이 들어왔으면 바로 멈춘다(확인과 재생 시작 사이의 경합)
+        let superseded = job.is_some_and(|id| sess.latest.lock().unwrap().get(&key).is_some_and(|&l| l > id));
+        if superseded {
+            let _ = handle.stop();
+        }
         *sess.current.lock().unwrap() = Some(Playing { key, handle });
     }
     let _ = tokio::time::timeout(Duration::from_secs(120), rx).await;
@@ -601,7 +795,8 @@ pub async fn speak(app: &AppRef, sess: &Arc<Session>, char_key: &str, text: &str
     let chain = sidecar::voice_chain(app, &ch.voice);
     let (wav, provider) = sidecar::tts(app, text, &chain).await?;
     app.last_used.lock().unwrap().tts = provider.clone();
-    play(app, sess, wav, key).await?;
+    // 재생 대기열로 — 대답과 겹쳐 동시에 나오지 않게
+    sess.audio_tx.send(Audio { wav, key, job: None, tl: None, at: Instant::now() }).await.map_err(|_| anyhow!("재생 작업 없음"))?;
     Ok(provider)
 }
 
@@ -665,7 +860,20 @@ async fn answer_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<J
     while let Some(job) = rx.recv().await {
         let g = sess.guild.get();
         let Some(ch) = app.character(g, &job.char_key) else { continue };
-        let lines = sess.buffer.lock().unwrap().snapshot(sess.keep(&app));
+        let t_llm = Instant::now();
+        let tl = Arc::new(Mutex::new(Timeline {
+            time: crate::convo::now_kst(),
+            character: ch.name.clone(),
+            via: job.via.to_string(),
+            stt_wait_ms: job.stt_wait_ms,
+            stt_ms: job.stt_ms,
+            answer_wait_ms: job.queued.elapsed().as_millis() as u64,
+            t0: Some(job.t0),
+            ..Default::default()
+        }));
+        // 부른 순간 고정한 대화 중 최근 PROMPT_MINUTES분만 — 기록이 길면 첫 문장이 늦고 무료 두뇌 분당 토큰 한도에 걸린다
+        let window = Duration::from_secs(PROMPT_MINUTES * 60);
+        let lines: Vec<crate::convo::Line> = job.lines.iter().filter(|l| l.at.elapsed() <= window).cloned().collect();
         let mut trace_users: Vec<u64> = lines.iter().map(|l| l.user).filter(|&u| u != 0).collect();
         trace_users.push(job.user);
         trace_users.sort_unstable();
@@ -681,17 +889,15 @@ async fn answer_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<J
         let llm_fut = llm::answer(&app, g, &job.char_key, &ch, &job.caller, &job.question, &lines, voice.then_some(stx));
         let early = async {
             match srx.await {
-                Ok(s) => {
-                    let t = Instant::now();
-                    let r = speak_measured(&app, &sess, &job, &s, key.clone()).await;
-                    Some((r, t))
-                }
+                Ok(s) => Some(speak_queued(&app, &sess, &job, &s, key.clone(), &tl).await),
                 Err(_) => None, // 형식이 어긋나 미리 못 받음 — 끝난 뒤 말한다
             }
         };
         let (res, spoke) = tokio::join!(
             async {
                 let r = llm_fut.await;
+                // 두뇌 시간은 여기서 — 미리 보낸 말의 TTS가 병렬로 돌아도 섞이지 않게
+                tl.lock().unwrap().llm_ms = t_llm.elapsed().as_millis() as u64;
                 // 글은 대답이 끝나는 즉시(음성 재생과 겹쳐서)
                 // 기억 도구 — 글을 올리기 전에 적용해서 결과를 글 끝에 작게 붙인다(SPEC F-37)
                 let notes = match &r {
@@ -701,6 +907,8 @@ async fn answer_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<J
                 if let (Ok(a), Some(tc)) = (&r, tc) {
                     // <글>이 비었으면 <말>을 올린다 — 음성 대답을 껐을 때 대답이 사라지지 않게
                     let text = if a.text.trim().is_empty() { &a.speech } else { &a.text };
+                    // 글은 서버에서도 길이를 자른다(프롬프트는 800자 이내로 시키지만 모델이 넘길 때가 있다)
+                    let text: String = if text.chars().count() > 1000 { text.chars().take(999).collect::<String>() + "…" } else { text.to_string() };
                     let mut body = format!("<@{}> {} **{}**: {}", job.user, ch.emoji, ch.name, text);
                     if !notes.is_empty() {
                         body.push_str(&format!("
@@ -746,31 +954,43 @@ async fn answer_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<J
                 if a.capped {
                     notify_cap_once(&app, &sess, tc).await;
                 }
+                {
+                    let mut t = tl.lock().unwrap();
+                    t.preset = a.preset.clone();
+                    t.llm_speech_ms = a.speech_ms;
+                }
                 if !voice {
-                    tracing::info!("대답(글만) llm={}ms preset={} usd={:.5}", a.ms, a.preset, a.usd);
+                    // 음성이 없으면 재생 조각까지 여기서 채운다
+                    finish_part(&sess, &tl, |t| t.result = "글만".into());
+                    finish_part(&sess, &tl, |_| {});
                     continue;
                 }
-                // 글은 위에서 올렸다(부른 사람 멘션 + 긴 답 — SPEC F-23). 말: 미리 못 했으면 지금
-                let (r, t_tts) = match spoke {
-                    Some((r, t)) => (r, t),
-                    None => {
-                        let t = Instant::now();
-                        (speak_measured(&app, &sess, &job, &a.speech, key).await, t)
-                    }
+                // 글은 위에서 올렸다(부른 사람 멘션 + 긴 답 — SPEC F-23). 말: 미리 못 했으면 지금(재생 대기열에 넣고 바로 다음 호출로)
+                let r = match spoke {
+                    Some(r) => r,
+                    None => speak_queued(&app, &sess, &job, &a.speech, key, &tl).await,
                 };
-                if let Err(e) = r {
-                    tracing::warn!("음성 대답 실패: {e}");
-                } else {
-                    tracing::info!(
-                        "대답 llm={}ms 말도착={:?}ms tts+재생={}ms preset={} usd={:.5}",
-                        a.ms, a.speech_ms, t_tts.elapsed().as_millis(), a.preset, a.usd
-                    );
+                match r {
+                    Ok(()) => finish_part(&sess, &tl, |t| set_result(t, "대답")),
+                    Err(e) => {
+                        tracing::warn!("음성 대답 실패: {e}");
+                        finish_part(&sess, &tl, |t| t.result = "음성 실패".into());
+                        finish_part(&sess, &tl, |_| {});
+                    }
                 }
             }
             Err(e) => {
                 sess.stats.lock().unwrap().answer_failed += 1;
                 let msg = e.to_string();
-                if spoke.is_some() {
+                // 미리 보낸 말이 실제로 재생 대기열에 들어갔을 때만 "말은 나감" — TTS가 실패했으면 재생 조각도 여기서 채운다
+                let spoken = matches!(spoke, Some(Ok(())));
+                if spoken {
+                    finish_part(&sess, &tl, |t| set_result(t, "끊김(말은 나감)"));
+                } else {
+                    finish_part(&sess, &tl, |t| set_result(t, "두뇌 실패"));
+                    finish_part(&sess, &tl, |_| {});
+                }
+                if spoken {
                     // 말은 이미 나갔다(두뇌가 끊긴 경우는 llm이 받은 데까지 Ok로 돌려주므로 보통 오지 않는다) — 실패 음성은 덧붙이지 않는다
                     tracing::warn!("대답 실패(말은 나감): {msg}");
                 } else if msg.starts_with("CAP") {
@@ -834,14 +1054,22 @@ pub fn apply_memory(app: &AppRef, guild: u64, user: u64, by: &str, ops: &[llm::M
     notes
 }
 
-/// 재생 시작 시점에 지연을 잰다(말 끝남 → 첫 소리) — SPEC N-01
-async fn speak_measured(app: &AppRef, sess: &Arc<Session>, job: &Job, text: &str, key: (u64, String)) -> Result<()> {
+/// TTS를 만들어 재생 대기열에 넣는다(재생 끝까지 기다리지 않음). 첫 소리 지연은 재생 작업이 재생 시작 때 잰다 — SPEC N-01
+async fn speak_queued(app: &AppRef, sess: &Arc<Session>, job: &Job, text: &str, key: (u64, String), tl: &Arc<Mutex<Timeline>>) -> Result<()> {
     let ch = app.character(sess.guild.get(), &job.char_key).ok_or_else(|| anyhow!("캐릭터 없음"))?;
     let chain = sidecar::voice_chain(app, &ch.voice);
+    let t = Instant::now();
     let (wav, provider) = sidecar::tts(app, text, &chain).await?;
     app.last_used.lock().unwrap().tts = provider;
-    app.record_latency(job.t0.elapsed().as_millis() as u64);
-    play(app, sess, wav, key).await
+    {
+        let mut x = tl.lock().unwrap();
+        x.tts_ms = t.elapsed().as_millis() as u64;
+    }
+    sess.audio_tx
+        .send(Audio { wav, key, job: Some(job.id), tl: Some(tl.clone()), at: Instant::now() })
+        .await
+        .map_err(|_| anyhow!("재생 작업 없음"))?;
+    Ok(())
 }
 
 async fn notify_cap_once(app: &AppRef, sess: &Arc<Session>, tc: Option<ChannelId>) {
@@ -888,6 +1116,8 @@ pub async fn join(app: &AppRef, guild: GuildId, channel: ChannelId, text: Option
         if *s.channel.lock().unwrap() != channel {
             app.songbird.join(guild, channel).await.map_err(|e| anyhow!("이동 실패: {e:?}"))?;
             *s.channel.lock().unwrap() = channel;
+            app.store.lock().unwrap().guild(guild.get()).voice_channel = Some(channel.get());
+            app.save_store();
             s.listening.store(should_listen(app, guild, channel), Ordering::Relaxed);
             s.clear_audio();
             s.buffer.lock().unwrap().clear();
@@ -904,6 +1134,7 @@ pub async fn join(app: &AppRef, guild: GuildId, channel: ChannelId, text: Option
     let call = app.songbird.get_or_insert(guild);
     let (utt_tx, utt_rx) = mpsc::channel(32);
     let (job_tx, job_rx) = mpsc::channel(8);
+    let (audio_tx, audio_rx) = mpsc::channel(8);
     let sess = Arc::new(Session {
         guild,
         channel: Mutex::new(channel),
@@ -917,6 +1148,11 @@ pub async fn join(app: &AppRef, guild: GuildId, channel: ChannelId, text: Option
         segs: Mutex::new(HashMap::new()),
         utt_tx,
         job_tx,
+        audio_tx,
+        next_job: std::sync::atomic::AtomicU64::new(0),
+        latest: Mutex::new(HashMap::new()),
+        timelines: Mutex::new(std::collections::VecDeque::new()),
+        emoji_last: Mutex::new(HashMap::new()),
         current: Mutex::new(None),
         pending: Mutex::new(HashMap::new()),
         wake: RwLock::new(build_wake(app)),
@@ -957,8 +1193,11 @@ pub async fn join(app: &AppRef, guild: GuildId, channel: ChannelId, text: Option
     let t2 = tokio::spawn(answer_worker(app.clone(), sess.clone(), job_rx));
     let t3 = tokio::spawn(refresh_members(app.clone(), sess.clone()));
     let t4 = tokio::spawn(prune_loop(app.clone(), sess.clone()));
-    sess.tasks.lock().unwrap().extend([t1, t2, t3, t4]);
+    let t5 = tokio::spawn(player(app.clone(), sess.clone(), audio_rx));
+    sess.tasks.lock().unwrap().extend([t1, t2, t3, t4, t5]);
     app.sessions.lock().await.insert(guild.get(), sess.clone());
+    app.store.lock().unwrap().guild(guild.get()).voice_channel = Some(channel.get());
+    app.save_store();
     tracing::info!("입장 guild={guild} channel={channel} listening={}", sess.listening.load(Ordering::Relaxed));
 
     // 녹음 고지 — 채팅 + 음성 1회(SPEC F-12)
@@ -1001,6 +1240,11 @@ fn spawn_voice_notice(app: &AppRef, sess: &Arc<Session>) {
         tokio::time::sleep(Duration::from_millis(800)).await;
         // 사이드카 예열·재시작 중이면 실패한다 — 최대 2분 동안 다시 시도(고지는 반드시 한 번)
         for attempt in 1..=12 {
+            // 그새 나갔으면(세션이 바뀌었으면) 그만
+            let alive = app2.sessions.lock().await.get(&sess2.guild.get()).is_some_and(|s| Arc::ptr_eq(s, &sess2));
+            if !alive {
+                return;
+            }
             match speak(&app2, &sess2, &first_char, &text, (0, String::new())).await {
                 Ok(_) => return,
                 Err(e) => {
@@ -1021,12 +1265,69 @@ pub async fn leave(app: &AppRef, guild: GuildId) -> bool {
     s.buffer.lock().unwrap().clear();
     s.clear_audio();
     let _ = app.songbird.remove(guild).await;
+    app.store.lock().unwrap().guild(guild.get()).voice_channel = None;
+    app.save_store();
     tracing::info!("퇴장 guild={guild}");
     crate::presence::refresh(app).await;
     true
 }
 
 /// 주인 입·퇴장 따라 듣기 켜고 끄기 — SPEC F-13
+/// 이모지로 부르기 — 음성 채널에서 캐릭터 이모지(🧡 클짱, 🩵 아짱)로 반응하면 그 캐릭터가 "응?" 하고
+/// 그 사람의 다음 말을 질문으로 받는다. 받아쓰기가 이름을 못 알아들어도 확실하게 부르는 방법(2026-10-15 요구: 딸깍 호출)
+pub async fn on_voice_effect(app: &AppRef, v: &serde_json::Value) {
+    let id = |k: &str| v.get(k).and_then(|x| x.as_str()).and_then(|s| s.parse::<u64>().ok()).filter(|&n| n != 0);
+    let (Some(g), Some(c), Some(u)) = (id("guild_id"), id("channel_id"), id("user_id")) else { return };
+    let Some(emoji) = v.get("emoji").and_then(|e| e.get("name")).and_then(|x| x.as_str()) else { return };
+    let Some(s) = app.sessions.lock().await.get(&g).cloned() else { return };
+    if *s.channel.lock().unwrap() != ChannelId::new(c) || !s.listening.load(Ordering::Relaxed) {
+        return;
+    }
+    // 이모지 변형 선택자(U+FE0F)는 빼고 비교
+    let clean = |e: &str| e.chars().filter(|&ch| ch != '\u{fe0f}').collect::<String>();
+    let cfg = app.cfg();
+    let Some((key, ch)) = cfg.characters.iter().find(|(_, ch)| !ch.emoji.is_empty() && clean(&ch.emoji) == clean(emoji)) else { return };
+    // 무시 대상은 부를 수 없다 — 아직 말을 안 해 참가자 정보가 없으면 캐시의 멤버 정보(봇·역할)와 저장소 목록으로 판정
+    ensure_participant(app, &s, u);
+    let ok = match s.allowed(app, u) {
+        Some(a) => a,
+        None => {
+            let member = app.ctx().and_then(|c| {
+                c.cache.guild(GuildId::new(g)).and_then(|gu| gu.members.get(&UserId::new(u)).map(|m| (m.user.bot, m.roles.iter().map(|r| r.get()).collect::<Vec<_>>())))
+            });
+            let Some((bot, roles)) = member else { return };
+            let st = app.store.lock().unwrap();
+            !bot && !st.state.guilds.get(&g).is_some_and(|gs| {
+                gs.ignore_users.contains(&u) || gs.self_ignored.contains(&u) || roles.iter().any(|r| gs.ignore_roles.contains(r))
+            })
+        }
+    };
+    if !ok {
+        return;
+    }
+    // 연타 방지 — 사람마다 5초에 한 번(대답 대기열이 "응?"으로 차지 않게)
+    {
+        let mut last = s.emoji_last.lock().unwrap();
+        if last.get(&u).is_some_and(|t| t.elapsed() < Duration::from_secs(5)) {
+            return;
+        }
+        last.insert(u, Instant::now());
+    }
+    let secs = cfg.listen.followup_secs.clamp(1, 120) + 4;
+    let until = Instant::now().checked_add(Duration::from_secs(secs)).unwrap_or_else(Instant::now);
+    s.pending.lock().unwrap().insert(u, (key.clone(), until));
+    let name = speaker_name(&s, u);
+    s.buffer.lock().unwrap().log_stt(u, &name, "emoji", 0, 0, "", 0, Some(format!("{}(이모지)", ch.name)));
+    tracing::info!("이모지 호출 {} guild={g}", ch.name);
+    let ack = if key == "클짱" { "응? 불렀어?" } else { "왜, 말해 봐." };
+    let (app2, s2, k2) = (app.clone(), s.clone(), key.clone());
+    tokio::spawn(async move {
+        if let Err(e) = speak(&app2, &s2, &k2, ack, (0, String::new())).await {
+            tracing::warn!("이모지 호출 대답 실패: {e}");
+        }
+    });
+}
+
 /// 듣는 채널에 누가 들어오고 나간 것을 대화 기록에 남긴다 — 두뇌가 "방금 누가 왔는지" 알게(2026-10-15 요구).
 /// 봇·무시 대상(유저·역할·스스로 거부)은 남기지 않고, 안 듣는 중이면 남기지 않는다. 버퍼 규칙(기억 시간·지우기)을 그대로 따른다
 pub async fn note_presence(app: &AppRef, guild: GuildId, user: UserId, old: Option<ChannelId>, new: Option<ChannelId>) {

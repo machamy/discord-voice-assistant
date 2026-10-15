@@ -261,6 +261,7 @@ async fn guild_get(State(app): State<AppRef>, headers: HeaderMap, Path(g): Path<
         "buffer_minutes": minutes,
         "hey_only": app.hey_only(g),
         "wake_extra": app.store.lock().unwrap().state.wake_extra.clone(),
+        "wake_risky": app.store.lock().unwrap().state.wake_risky.clone(),
         "voice_reply": app.voice_reply(g),
         "greeting_on": gs.greeting_on != Some(false),
         "greeting": gs.greeting.clone().unwrap_or_default(),
@@ -403,16 +404,32 @@ async fn guild_set(State(app): State<AppRef>, headers: HeaderMap, Path(g): Path<
 #[derive(Deserialize)]
 struct WakePatch {
     character: String,
-    words: Vec<String>,
+    words: Option<Vec<String>>,
+    /// 위험 별칭(실장·약정처럼 평소 쓰는 말)
+    risky: Option<Vec<String>>,
 }
 
 /// 호출어 사전(전역) — config 호출어에 더할 받아쓰기 변형. 바로 모든 세션에 반영
 async fn wake_set(State(app): State<AppRef>, headers: HeaderMap, Json(b): Json<WakePatch>) -> R {
     authed(&app, &headers)?;
-    match voice::set_wake_extra(&app, &b.character, &b.words).await {
-        Ok(words) => Ok(Json(json!({"ok": true, "words": words})).into_response()),
-        Err(e) => Err(err(StatusCode::BAD_REQUEST, &e)),
+    // 두 목록을 먼저 다 검증한다 — 하나만 저장되고 400이 나가는 일이 없게
+    for w in [&b.words, &b.risky].into_iter().flatten() {
+        voice::check_wake_words(&app, &b.character, w).map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
     }
+    let mut res = json!({"ok": true});
+    if let Some(w) = &b.words {
+        match voice::set_wake_extra(&app, &b.character, w).await {
+            Ok(words) => res["words"] = json!(words),
+            Err(e) => return Err(err(StatusCode::BAD_REQUEST, &e)),
+        }
+    }
+    if let Some(w) = &b.risky {
+        match voice::set_wake_risky(&app, &b.character, w).await {
+            Ok(words) => res["risky"] = json!(words),
+            Err(e) => return Err(err(StatusCode::BAD_REQUEST, &e)),
+        }
+    }
+    Ok(Json(res).into_response())
 }
 
 #[derive(Deserialize)]
@@ -645,7 +662,7 @@ async fn buffer(State(app): State<AppRef>, headers: HeaderMap, Path(g): Path<u64
     authed(&app, &headers)?;
     let g = nz(g)?;
     let s = app.sessions.lock().await.get(&g).cloned();
-    let (lines, events, stats, listening) = match s {
+    let (lines, events, stats, listening, timelines) = match s {
         Some(s) => {
             let keep = Duration::from_secs(app.listen_opts(g).1 * 60);
             let (l, e) = {
@@ -653,16 +670,17 @@ async fn buffer(State(app): State<AppRef>, headers: HeaderMap, Path(g): Path<u64
                 (b.snapshot(keep), b.events(keep))
             };
             let st = s.stats.lock().unwrap().clone();
-            (l, e, Some(st), s.listening.load(std::sync::atomic::Ordering::Relaxed))
+            let tl: Vec<crate::voice::Timeline> = s.timelines.lock().unwrap().iter().rev().cloned().collect();
+            (l, e, Some(st), s.listening.load(std::sync::atomic::Ordering::Relaxed), tl)
         }
-        None => (vec![], vec![], None, false),
+        None => (vec![], vec![], None, false, vec![]),
     };
     // 화면 표시만 — 저장·내려받기 없음(SPEC N-06). 받아쓰기 기록에는 글 내용이 없다
     let side = app.sidecar.lock().unwrap().ok;
     let last = app.last_used.lock().unwrap().stt.clone();
     Ok((
         [(header::CACHE_CONTROL, "no-store")],
-        Json(json!({"lines": lines, "events": events, "stats": stats, "listening": listening, "sidecar_ok": side, "stt_chain": app.stt_chain(), "stt_last": last})),
+        Json(json!({"lines": lines, "events": events, "stats": stats, "listening": listening, "sidecar_ok": side, "stt_chain": app.stt_chain(), "stt_last": last, "timelines": timelines})),
     )
         .into_response())
 }
@@ -789,6 +807,8 @@ struct PreviewReq {
     character: String,
     guild: Option<String>,
     text: Option<String>,
+    /// 저장하지 않고 들어 볼 목소리(없으면 저장된 것)
+    voice: Option<std::collections::BTreeMap<String, crate::config::Voice>>,
 }
 
 /// 목소리 미리 듣기 — 브라우저에서 재생할 WAV를 돌려준다(F-41)
@@ -797,7 +817,16 @@ async fn tts_preview(State(app): State<AppRef>, headers: HeaderMap, Json(b): Jso
     let g = b.guild.and_then(|g| g.parse::<u64>().ok()).unwrap_or(0); // 0은 "서버 설정 없음"으로만 쓰고 ID 생성에 안 쓴다
     let ch = app.character(g, &b.character).ok_or_else(|| err(StatusCode::NOT_FOUND, "캐릭터 없음"))?;
     let text = b.text.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| format!("안녕, 나는 {}이야. 이 목소리 어때?", ch.name));
-    let chain = sidecar::voice_chain(&app, &ch.voice);
+    let voice = match b.voice {
+        Some(v) => {
+            for (prov, x) in &v {
+                crate::config::validate_voice(prov, x).map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
+            }
+            v
+        }
+        None => ch.voice.clone(),
+    };
+    let chain = sidecar::voice_chain(&app, &voice);
     let (wav, provider) = sidecar::tts(&app, &text, &chain).await.map_err(|e| err(StatusCode::BAD_GATEWAY, e.to_string()))?;
     Ok(([(header::CONTENT_TYPE, "audio/wav".to_string()), (header::HeaderName::from_static("x-provider"), provider)], wav).into_response())
 }
