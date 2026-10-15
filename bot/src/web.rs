@@ -416,6 +416,15 @@ async fn wake_set(State(app): State<AppRef>, headers: HeaderMap, Json(b): Json<W
     for w in [&b.words, &b.risky].into_iter().flatten() {
         voice::check_wake_words(&app, &b.character, w).map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
     }
+    // 두 목록을 같이 바꿀 땐 새 목록끼리 겹치지 않는지 먼저(저장 순서 때문에 한쪽만 바뀌지 않게)
+    if let (Some(a), Some(r)) = (&b.words, &b.risky) {
+        let norm = |w: &String| w.split_whitespace().collect::<Vec<_>>().join(" ");
+        if let Some(x) = a.iter().map(norm).find(|x| r.iter().map(norm).any(|y| &y == x)) {
+            return Err(err(StatusCode::BAD_REQUEST, &format!("'{x}'이(가) 추가 호출어와 위험 별칭 양쪽에 있어요 — 한쪽만 두세요")));
+        }
+        // 저장은 위험 별칭을 먼저 비우고(겹침 검사가 옛 목록에 걸리지 않게) 순서대로
+        voice::set_wake_risky(&app, &b.character, &[]).await.map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
+    }
     let mut res = json!({"ok": true});
     if let Some(w) = &b.words {
         match voice::set_wake_extra(&app, &b.character, w).await {

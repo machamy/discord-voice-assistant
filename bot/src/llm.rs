@@ -31,6 +31,8 @@ pub struct Answer {
     /// 입출력 원문(웹 콘솔 F-45) — 보낸 프롬프트 전체와 받은 응답 그대로
     pub prompt: String,
     pub raw: String,
+    /// 말이 나간 뒤 두뇌가 끊겨 받은 데까지로 끝낸 대답
+    pub cut: bool,
 }
 
 /// 기억 도구 — 두뇌가 대답 끝에 붙이는 태그. 누가 분명히 부탁했을 때만 쓰게 프롬프트로 시킨다
@@ -784,7 +786,7 @@ async fn answer_with(
                 let format_ok = strict_parts(&clean).is_some_and(|(s, t)| !s.is_empty() && !t.is_empty());
                 let tokens = [raw.input, raw.output, raw.cache_read, raw.cache_write];
                 let (speech, text) = split_answer(&clean);
-                return Ok(Answer { speech, text, preset: name, usd, ms, capped: skipped_for_cap, format_ok, tokens, speech_ms: hook.at, memory, prompt: prompt_dump, raw: raw.text });
+                return Ok(Answer { speech, text, preset: name, usd, ms, capped: skipped_for_cap, format_ok, tokens, speech_ms: hook.at, memory, prompt: prompt_dump, raw: raw.text, cut: false });
             }
             Err(e) => {
                 let ms = t.elapsed().as_millis() as u64;
@@ -835,7 +837,7 @@ async fn answer_with(
                     app.save_store();
                     return Ok(Answer {
                         speech: hook.speech.clone(), text, preset: name, usd, ms, capped: skipped_for_cap,
-                        format_ok: false, tokens: [0; 4], speech_ms: hook.at, memory: vec![], prompt: prompt_dump, raw: hook.partial.clone(),
+                        format_ok: false, tokens: [0; 4], speech_ms: hook.at, memory: vec![], prompt: prompt_dump, raw: hook.partial.clone(), cut: true,
                     });
                 }
                 errors.push(format!("{name}: {e}"));

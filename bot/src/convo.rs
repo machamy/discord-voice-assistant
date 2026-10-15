@@ -403,7 +403,8 @@ impl Wake {
             let hit = re.captures_iter(text).find_map(|c| {
                 let (all, name) = (c.get(0)?, c.get(2)?);
                 let after = &text[name.end()..];
-                let hey = c.get(1).is_some_and(|h| h.as_str() != "에이") && !PARTICLES.iter().any(|p| after.starts_with(p));
+                // 진짜 헤이(에이 제외)를 붙였으면 조사가 붙어도 부른 것("헤이 실장님 이거 봐")
+                let hey = c.get(1).is_some_and(|h| h.as_str() != "에이");
                 let voc = ["아", "야"].iter().any(|v| after.strip_prefix(v).is_some_and(|r| r.chars().next().is_none_or(|ch| !ch.is_alphanumeric())));
                 let pre_empty = text[..name.start()].trim_matches(|ch: char| !ch.is_alphanumeric()).is_empty();
                 // 너에게 묻는 말 — 낱말 단위로(“너무”는 아님)
@@ -549,6 +550,7 @@ mod tests {
         }
         // 헤이만 모드: 진짜 헤이만(에이·부르는 꼴만으로는 안 됨)
         assert!(wk.find("헤이 실장 뭐해", true).is_some());
+        assert!(wk.find("헤이 실장님 이거 봐", false).is_some());
         assert!(wk.find("에이 실장아 뭐해", true).is_none());
         assert!(wk.find("실장아 뭐해", true).is_none());
     }
