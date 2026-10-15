@@ -231,6 +231,44 @@ fn jamo_dist(a: &[Jamo], b: &[Jamo]) -> Option<f32> {
     (a.len() == b.len()).then(|| a.iter().zip(b).map(|(x, y)| cost_l(x.0, y.0) + cost_v(x.1, y.1) + if x.2 == y.2 { 0.0 } else { 1.0 }).sum())
 }
 
+/// 이름 앞에 있어도 "부르는 말"로 보는 말(그 밖의 말이 앞에 있으면 문장 속 언급으로 본다)
+const FILLERS: [&str; 21] = [
+    "야", "어", "아", "저기", "그럼", "근데", "자", "음", "오", "얘", "있잖아", "잠깐", "잠깐만", "혹시", "아니", "헐", "저기요", "야야", "와", "오오", "그래서",
+];
+/// 이름에 바로 붙으면 부름이 아니라 이야기 속 언급("아짱도 아니고", "클장이 긁어요?") — 2026-10-15 실사용 오호출
+const PARTICLES: [&str; 30] = [
+    "이랑", "이가", "이는", "이도", "이를", "이한테", "이나", "하고", "한테", "에게", "처럼", "보다", "까지", "부터", "으로", "께서", "도", "는", "은", "가",
+    "를", "랑", "이", "의", "에", "께", "로", "만", "과", "님",
+];
+
+/// 문장 속 이름이 "부른 것"인가 — 맨 앞(부르는 말만 앞에 있음), '아/야' 부르는 꼴, 문장 끝 부름만 인정
+fn is_called(text: &str, start: usize, end: usize) -> bool {
+    let after = &text[end..];
+    for voc in ["아", "야"] {
+        if let Some(r) = after.strip_prefix(voc) {
+            if r.chars().next().is_none_or(|c| !c.is_alphanumeric()) {
+                return true;
+            }
+        }
+    }
+    let not_word = |c: char| !c.is_alphanumeric();
+    let pre = text[..start].trim_matches(not_word);
+    if PARTICLES.iter().any(|p| after.starts_with(p)) {
+        // 맨 앞에서 조사를 붙여 묻는 말("클짱은 뭐 좋아해?")은 부른 것 — 물음표로 끝날 때만(받아쓰기가 의문문에 붙인다)
+        // "클장이 긁어요?"(언급)와 구별하려고 은·는·도만
+        return pre.is_empty() && ["은", "는", "도"].iter().any(|p| after.starts_with(p)) && text.trim_end().ends_with('?');
+    }
+    if pre.is_empty() || pre.split_whitespace().all(|w| FILLERS.contains(&w.trim_matches(not_word))) {
+        return true;
+    }
+    // 문장 끝에서 부르기 — "이거 어때 클짱?" / "고마워 클짱." (뒤에 말이 더 이어지면 "오늘 아짱, 내일 보자"처럼 언급)
+    let a = after.trim_start();
+    if a.is_empty() || a.starts_with(['?', '!']) {
+        return true;
+    }
+    a.starts_with([',', '.', '~']) && !a.chars().any(char::is_alphanumeric)
+}
+
 /// 호출어 뒤 질문 부분 — 부르는 말 '아/야'와 앞 문장부호를 뗀다
 fn rest_after(text: &str, end: usize) -> String {
     let mut rest = &text[end..];
@@ -261,9 +299,11 @@ impl Wake {
     /// hey=true면 이름 앞에 헤이가 꼭 있어야 한다(`/설정 호출방식 헤이만`) — "헤이 클짱"·"헤이클짱"·"헤이, 클짱"·"헤이… 클짱".
     /// 두 모드 모두 헤이(없으면 이름) 앞은 글자의 시작이어야 한다 — "플랜에이클짱"은 안 걸린다
     fn build(words: &[String], hey: bool) -> Result<Regex, regex::Error> {
-        let alt = words.iter().map(|w| regex::escape(w)).collect::<Vec<_>>().join("|");
+        // 띄어쓰기가 있는 호출어("오케이 클짱")는 받아쓰기 띄어쓰기와 상관없이 — 공백 자리를 \s*로
+        let alt = words.iter().map(|w| regex::escape(w).replace(' ', r"\s*")).collect::<Vec<_>>().join("|");
         let opt = if hey { "" } else { "?" };
-        let pat = format!(r"(?:^|[^\p{{L}}\p{{N}}])(?:(?:{HEY})[^\p{{L}}\p{{N}}]*){opt}(?:{alt})");
+        // 1번 묶음 = 헤이, 2번 묶음 = 이름
+        let pat = format!(r"(?:^|[^\p{{L}}\p{{N}}])(?:({HEY})[^\p{{L}}\p{{N}}]*){opt}({alt})");
         regex::RegexBuilder::new(&pat).size_limit(1 << 20).build()
     }
 
@@ -293,6 +333,11 @@ impl Wake {
         let re = self.hey_re.as_ref()?;
         for c in re.captures_iter(text) {
             let (Some(all), Some(hey), Some(word)) = (c.get(0), c.get(1), c.get(2)) else { continue };
+            // 두 글자 뒤가 낱말 끝이거나 부르는 말('아/야/이요')일 때만 — "헤이 아마도"·"헤이 클라우드"는 이름이 아니다
+            let tail = &text[word.end()..];
+            if !tail.starts_with(['아', '야', '이']) && tail.chars().next().is_some_and(char::is_alphanumeric) {
+                continue;
+            }
             let Some(w) = jamo(word.as_str()) else { continue };
             let max = if hey.as_str() == "에이" { FUZZY_MAX_EI } else { FUZZY_MAX };
             let mut scored: Vec<(f32, &String)> = self.canon.iter().filter_map(|(k, j)| jamo_dist(&w, j).map(|d| (d, k))).collect();
@@ -313,9 +358,16 @@ impl Wake {
         let mut best: Option<(usize, usize, &String)> = None;
         for (k, plain, hey) in &self.pats {
             let re = if hey_only { hey } else { plain };
-            if let Some(m) = re.find(text) {
-                if best.is_none_or(|b| m.start() < b.0) {
-                    best = Some((m.start(), m.end(), k));
+            // 헤이를 붙였으면 부른 것. 아니면 이름이 부르는 자리에 있을 때만(이야기 속 언급은 건너뛰고 다음 것을 본다)
+            let hit = re.captures_iter(text).find_map(|c| {
+                let (all, name) = (c.get(0)?, c.get(2)?);
+                // "에이"는 감탄사로도 흔하다 — "에이 클짱도 그건 모르지"처럼 이름에 조사가 붙으면 언급으로 본다
+                let hey = c.get(1).is_some_and(|h| h.as_str() != "에이" || !PARTICLES.iter().any(|p| text[name.end()..].starts_with(p)));
+                (hey_only || hey || is_called(text, name.start(), name.end())).then(|| (all.start(), name.end()))
+            });
+            if let Some((s, e)) = hit {
+                if best.is_none_or(|b| s < b.0) {
+                    best = Some((s, e, k));
                 }
             }
         }
@@ -362,8 +414,23 @@ mod tests {
 
     #[test]
     fn earliest_wins() {
-        let h = w().find0("아짱이랑 클짱 중에 누가 똑똑해").unwrap();
-        assert_eq!(h.character, "아짱");
+        let h = w().find0("클짱, 아짱이 그러는데 맞아?").unwrap();
+        assert_eq!(h.character, "클짱");
+    }
+
+    #[test]
+    fn mention_is_not_call() {
+        // 2026-10-15 실사용에서 봇 얘기를 하다가 끼어든 문장들
+        for t in ["아짱도 아니고 글짱도 아니잖아", "여기 아장도 있고 아짱도 있고", "클장이 긁어요?", "아짱이랑 클짱 중에 누가 똑똑해", "근데 오늘 클짱한테 물어봤는데"] {
+            assert!(w().find0(t).is_none(), "{t}");
+        }
+        // 부르는 자리면 걸린다
+        for t in ["에이 클짱도 그건 모르지", "헤이 아마도", "헤이 클라우드 써 봐", "오늘 아짱, 내일 보자", "그건 클짱의 의견이고"] {
+            assert!(w().find0(t).is_none(), "{t}");
+        }
+        for (t, c) in [("야 클짱 오늘 뭐 해", "클짱"), ("이거 어때 클짱?", "클짱"), ("그거 말이야 아짱아 어떻게 생각해", "아짱"), ("근데 클짱 이거 알아?", "클짱"), ("헤이 아짱 해야죠", "아짱"), ("클짱은 뭐 좋아해?", "클짱"), ("아니 클짱 그게 아니라", "클짱"), ("헐 아짱 이거 봐", "아짱")] {
+            assert_eq!(w().find0(t).map(|h| h.character), Some(c.to_string()), "{t}");
+        }
     }
 
     #[test]
@@ -424,6 +491,15 @@ mod tests {
         }
         // 이름만 부르는 기본 모드에선 그대로 걸린다
         assert!(wk.find("클짱 몇 시야", false).is_some());
+    }
+
+    #[test]
+    fn custom_words() {
+        let wk = Wake::new(&[("클짱".into(), vec!["클짱".into(), "클로드".into(), "오케이 클짱".into()]), ("아짱".into(), vec!["아짱".into()])]);
+        for t in ["클로드 오늘 뭐 해", "오케이 클짱 날씨 알려줘", "오케이클짱, 날씨"] {
+            assert_eq!(wk.find(t, false).map(|h| h.character), Some("클짱".to_string()), "{t}");
+        }
+        assert!(wk.find("클로드가 그러는데", false).is_none());
     }
 
     #[test]

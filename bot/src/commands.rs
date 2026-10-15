@@ -136,6 +136,12 @@ pub fn definitions(app: &AppRef) -> Vec<CreateCommand> {
             .add_option(sub("기억시간", "대화를 기억하는 시간").add_sub_option(
                 CreateCommandOption::new(CommandOptionType::Integer, "분", "1~120").min_int_value(1).max_int_value(120).required(true),
             ))
+            .add_option(
+                sub("호출어", "[주인] 부르는 말 추가·빼기(모든 서버 공통) — 비우면 목록")
+                    .add_sub_option(char_opt(app))
+                    .add_sub_option(CreateCommandOption::new(CommandOptionType::String, "추가", "예: 클로드, 오케이 클짱, 받아쓰기가 적은 변형").max_length(20))
+                    .add_sub_option(CreateCommandOption::new(CommandOptionType::String, "빼기", "추가했던 호출어").max_length(20)),
+            )
             .add_option(sub("초기화", "캐릭터 설정을 config.toml 기본값으로").add_sub_option(char_opt(app))),
     ]
 }
@@ -659,6 +665,30 @@ async fn settings_cmd(app: &AppRef, ctx: &Context, cmd: &CommandInteraction, gui
             app.store.lock().unwrap().guild(g).buffer_minutes = Some(m);
             app.save_store();
             format!("⏳ 대화를 최근 {m}분만 기억해요.")
+        }
+        "호출어" => {
+            if !is_owner(app, cmd) {
+                return reply(ctx, cmd, OWNER_ONLY, true).await;
+            }
+            let Some(ch) = opt_str(sub, "캐릭터").map(str::to_string) else { return reply(ctx, cmd, BAD_OPT, true).await };
+            let mut words = app.store.lock().unwrap().state.wake_extra.get(&ch).cloned().unwrap_or_default();
+            let add = opt_str(sub, "추가").map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "));
+            let del = opt_str(sub, "빼기").map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "));
+            if add.is_none() && del.is_none() {
+                let base = app.cfg().characters.get(&ch).map(|c| c.wake.join(", ")).unwrap_or_default();
+                let extra = if words.is_empty() { "없음".to_string() } else { words.join(", ") };
+                return reply(ctx, cmd, fit(&format!("📣 **{ch}** 호출어\n기본: {base}\n추가: {extra}"), 1900), true).await;
+            }
+            if let Some(a) = add {
+                words.push(a);
+            }
+            if let Some(d) = del {
+                words.retain(|w| w != &d);
+            }
+            match voice::set_wake_extra(app, &ch, &words).await {
+                Ok(w) => format!("📣 {ch} 추가 호출어: {}", if w.is_empty() { "없음".into() } else { w.join(", ") }),
+                Err(e) => return reply(ctx, cmd, format!("❌ {e}"), true).await,
+            }
         }
         "초기화" => {
             let Some(ch) = opt_str(sub, "캐릭터") else { return reply(ctx, cmd, BAD_OPT, true).await };

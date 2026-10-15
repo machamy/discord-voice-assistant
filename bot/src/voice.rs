@@ -88,6 +88,48 @@ pub struct Session {
     fetching: Mutex<HashSet<u64>>,
 }
 
+/// 추가 호출어(전역) 바꾸기 — 웹 콘솔·`/설정 호출어` 공통. 부르는 이름("클로드")이든 받아쓰기 변형("실장")이든 된다.
+/// 띄어쓰기가 있는 말도 되고(받아쓰기 띄어쓰기는 무시), 바로 모든 세션에 반영한다
+pub async fn set_wake_extra(app: &AppRef, character: &str, words: &[String]) -> std::result::Result<Vec<String>, String> {
+    let cfg = app.cfg();
+    let Some(ch) = cfg.characters.get(character) else { return Err("없는 캐릭터예요".into()) };
+    let mut out: Vec<String> = Vec::new();
+    for w in words {
+        let w = w.split_whitespace().collect::<Vec<_>>().join(" ");
+        if w.is_empty() {
+            continue;
+        }
+        if w.chars().count() > 20 || !w.chars().any(char::is_alphanumeric) {
+            return Err("호출어는 20자 이내 글자로".into());
+        }
+        if !ch.wake.contains(&w) && !out.contains(&w) {
+            out.push(w);
+        }
+    }
+    if out.len() > 30 {
+        return Err("추가 호출어는 30개까지".into());
+    }
+    let mut all = ch.wake.clone();
+    all.extend(out.iter().cloned());
+    if crate::convo::Wake::compile(&all).is_err() {
+        return Err("호출어로 쓸 수 없는 글자가 있어요".into());
+    }
+    {
+        let mut st = app.store.lock().unwrap();
+        if out.is_empty() {
+            st.state.wake_extra.remove(character);
+        } else {
+            st.state.wake_extra.insert(character.to_string(), out.clone());
+        }
+    }
+    app.save_store();
+    let sessions: Vec<_> = app.sessions.lock().await.values().cloned().collect();
+    for s in sessions {
+        s.reload_wake(app);
+    }
+    Ok(out)
+}
+
 /// config 호출어(첫 번째가 대표 이름) + 웹 콘솔 호출어 사전
 pub fn build_wake(app: &AppRef) -> Wake {
     let cfg = app.cfg();
@@ -653,7 +695,7 @@ async fn answer_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<J
                 // 글은 대답이 끝나는 즉시(음성 재생과 겹쳐서)
                 // 기억 도구 — 글을 올리기 전에 적용해서 결과를 글 끝에 작게 붙인다(SPEC F-37)
                 let notes = match &r {
-                    Ok(a) if !a.memory.is_empty() => apply_memory(&app, g, job.user, &job.caller, &a.memory),
+                    Ok(a) if !a.memory.is_empty() && sess.allowed(&app, job.user) == Some(true) => apply_memory(&app, g, job.user, &job.caller, &a.memory),
                     _ => vec![],
                 };
                 if let (Ok(a), Some(tc)) = (&r, tc) {
@@ -677,7 +719,8 @@ async fn answer_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<J
                 // 입출력 원문(웹 콘솔) — 그새 부른 사람이 무시됐으면 남기지 않는다(판정과 기록을 버퍼 잠금 안에서)
                 {
                     let mut b = sess.buffer.lock().unwrap();
-                    if sess.allowed(&app, job.user) == Some(true) {
+                    // 부른 사람이 허용이고, 프롬프트에 든 사람 중 그새 무시된 사람이 없을 때만(SPEC F-11)
+                    if sess.allowed(&app, job.user) == Some(true) && trace_users.iter().all(|&u| sess.allowed(&app, u) != Some(false)) {
                         b.log_llm(crate::convo::LlmTrace {
                             time: crate::convo::now_kst(),
                             at: Instant::now(),
@@ -694,10 +737,12 @@ async fn answer_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<J
                     }
                 }
                 // 캐릭터 말도 기록에 남긴다(두 캐릭터가 같은 기록을 본다 — SPEC §3)
-                // 글이 비었으면 말을 기억한다(채팅에 올린 것과 같게)
-                let said = if a.text.trim().is_empty() { &a.speech } else { &a.text };
-                let mem: String = said.chars().take(300).collect();
-                sess.buffer.lock().unwrap().push(0, &ch.name, &mem);
+                // 짧은 <말>만 기록한다 — 긴 <글>(목록형 정리)을 넣으면 다음 호출에서 그 정리를 또 반복했다(2026-10-15 실사용).
+                // 말이 비었으면 남기지 않는다
+                if !a.speech.trim().is_empty() {
+                    let mem: String = a.speech.chars().take(150).collect();
+                    sess.buffer.lock().unwrap().push(0, &ch.name, &mem);
+                }
                 if a.capped {
                     notify_cap_once(&app, &sess, tc).await;
                 }
@@ -749,6 +794,7 @@ async fn answer_worker(app: AppRef, sess: Arc<Session>, mut rx: mpsc::Receiver<J
 /// 기억 도구 적용 — 기억은 서버별, 최대 MEMORY_MAX_ITEMS개(넘치면 오래된 것부터). 돌려주는 건 글 끝에 붙일 안내
 pub fn apply_memory(app: &AppRef, guild: u64, user: u64, by: &str, ops: &[llm::MemOp]) -> Vec<String> {
     let mut notes = Vec::new();
+    let is_owner = user == app.cfg().owner_id;
     {
         let mut st = app.store.lock().unwrap();
         let mems = &mut st.guild(guild).memories;
@@ -769,9 +815,10 @@ pub fn apply_memory(app: &AppRef, guild: u64, user: u64, by: &str, ops: &[llm::M
                     if k.chars().count() < 2 {
                         continue;
                     }
+                    // 음성 "잊어"는 내가 부탁한 기억만(주인은 전부) — /기억 지우기와 같은 규칙
                     let kl = k.to_lowercase();
                     let before = mems.len();
-                    mems.retain(|m| !m.text.to_lowercase().contains(&kl));
+                    mems.retain(|m| !(m.text.to_lowercase().contains(&kl) && (is_owner || m.user == user)));
                     let n = before - mems.len();
                     if n > 0 {
                         notes.push(format!("잊었어: {k} ({n}개)"));
@@ -848,12 +895,13 @@ pub async fn join(app: &AppRef, guild: GuildId, channel: ChannelId, text: Option
             let nc = notice_channel(app, guild, channel).await;
             post(app, nc, &format!("{}\n(듣는 채널: <#{channel}>)", app.cfg().notice.text)).await;
             spawn_voice_notice(app, &s);
-            spawn_unmapped_check(app, &s, nc);
             crate::presence::refresh(app).await;
         }
         return Ok(s);
     }
-    let call = app.songbird.join(guild, channel).await.map_err(|e| anyhow!("입장 실패: {e:?}"))?;
+    // 수신기를 접속 "전에" 단다 — 디스코드는 접속 핸드셰이크 도중에 "이 SSRC는 누구"(Speaking)를 보내는데,
+    // 접속이 끝난 뒤에 달면 그걸 놓쳐 아무도 못 알아듣는다(2026-10-15 실제 발생: 입장할 때마다 전부 "누구인지 모름")
+    let call = app.songbird.get_or_insert(guild);
     let (utt_tx, utt_rx) = mpsc::channel(32);
     let (job_tx, job_rx) = mpsc::channel(8);
     let sess = Arc::new(Session {
@@ -881,6 +929,18 @@ pub async fn join(app: &AppRef, guild: GuildId, channel: ChannelId, text: Option
         c.add_global_event(CoreEvent::SpeakingStateUpdate.into(), rx.clone());
         c.add_global_event(CoreEvent::VoiceTick.into(), rx.clone());
         c.add_global_event(CoreEvent::ClientDisconnect.into(), rx);
+    }
+    let joined = {
+        let stage = call.lock().await.join(channel).await;
+        match stage {
+            Ok(j) => j.await,
+            Err(e) => Err(e),
+        }
+    };
+    if let Err(e) = joined {
+        // 실패한 Call은 지운다 — 남기면 다음 입장 때 수신기가 겹쳐 붙는다
+        let _ = app.songbird.remove(guild).await;
+        return Err(anyhow!("입장 실패: {e:?}"));
     }
     // 이미 채널에 있는 사람들 정보를 미리
     if let Some(ctx) = app.ctx() {

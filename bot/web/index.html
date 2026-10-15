@@ -274,7 +274,7 @@ function renderChars() {
       <div class="row"><div><label>속도</label><input id="ra-${i}" value="${esc(v.rate)}"></div><div><label>높낮이</label><input id="pi-${i}" value="${esc(v.pitch)}"></div></div>
       <label>말투 (시스템 프롬프트)</label><textarea id="pe-${i}">${esc(c.persona)}</textarea>
       <label>호출어 (기본, config.toml)</label><div class="dim">${c.wake.map(esc).join(', ')}</div>
-      <label>호출어 사전 — 받아쓰기가 이름을 이렇게 적으면 호출로 봐요 (쉼표로 구분, 모든 서버 공통)</label>
+      <label>추가 호출어 — 부르는 이름(예: 클로드, 오케이 클짱)이나 받아쓰기가 적은 변형 (쉼표로 구분, 모든 서버 공통, /설정 호출어)</label>
       <div class="row"><input id="wx-${i}" value="${esc((GD.wake_extra?.[k] || []).join(', '))}" placeholder="예: 클잖, 야쩡"><button class="g" onclick="saveWake(${i})">사전 저장</button></div>
       <div class="dim" style="font-size:12px">"헤이 ○○"처럼 헤이 바로 뒤에 오는 말은 이름과 비슷하기만 해도 호출로 봐요(받아쓰기 상황에서 확인).</div>
       <div class="row" style="margin-top:12px"><button class="b" onclick="saveChar(${i})">저장</button><button class="g" onclick="preview(${i})">▶ 미리 듣기</button><button class="g" onclick="resetChar(${i})">기본값</button><span></span></div>
@@ -293,7 +293,7 @@ async function saveChar(i) {
 }
 async function saveWake(i) {
   const k = CK[i];
-  const words = val('wx-' + i).split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+  const words = val('wx-' + i).split(/[,，]+/).map(s => s.trim()).filter(Boolean);
   const r = await post('/api/wake', { character: k, words });
   toast(`${k} 호출어 사전 저장 (${r.words.length}개)`); GD = await api(`/api/guild/${G}`); renderChars();
 }

@@ -105,7 +105,13 @@ HALLUCINATIONS = [
     "다음 영상에서 만나요", "시청해 주셔서 감사합니다", "시청해주셔서 감사합니다", "구독과 좋아요",
     "구독 좋아요", "좋아요와 구독", "MBC 뉴스", "KBS 뉴스", "SBS 뉴스", "이 영상은", "자막 제공", "자막 by",
     "끝까지 시청", "오늘도 시청", "감사합니다.", "고맙습니다.",
+
 ]
+# 2026-10-15 실사용에서 아무도 안 한 말로 기록된 것 — 흔한 인사라 발화 전체가 딱 그 말일 때만 버린다("다들 수고하셨습니다"는 살림)
+EXACT_HALLUCINATIONS = {"수고하셨습니다", "안녕히계세요", "안녕히가세요"}
+# 한국어로 고정했는데 키릴·가나·한자만 나오면 환각(실사용: "Редактор субтитров А.Семкин")
+_FOREIGN = re.compile(r"[Ѐ-ӿ぀-ヿ一-鿿]")
+_HANGUL = re.compile(r"[가-힣]")
 _ONLY_PUNCT = re.compile(r"^[\s\W_]*$")
 
 
@@ -117,13 +123,19 @@ def _err_kind(e: BaseException) -> str:
     return type(e).__name__
 
 
-def is_hallucination(text: str, no_speech: float, logprob: float) -> bool:
+def is_hallucination(text: str, no_speech: float, logprob: float, audio_s: float = 99.0) -> bool:
     t = text.strip()
     if not t or _ONLY_PUNCT.match(t):
         return True
+    if not _HANGUL.search(t):
+        # 한글이 하나도 없는데 외국 문자가 섞였거나, 2초 미만 짧은 소리가 영어 한 줄로 나오면 버린다("hey y'all ciao!")
+        if _FOREIGN.search(t) or audio_s < 2.0:
+            return True
     if no_speech > 0.6 and logprob < -1.0:
         return True
     norm = t.replace(" ", "")
+    if re.sub(r"[\W_]", "", norm) in EXACT_HALLUCINATIONS:
+        return True
     for h in HALLUCINATIONS:
         hn = h.replace(" ", "")
         # 짧은 발화가 통째로 상투 문구일 때만 버린다(긴 문장 속 "감사합니다"는 살린다)
@@ -254,7 +266,7 @@ async def stt(request: Request, chain: str = "local-whisper:cuda:large-v3-turbo,
             errors.append({"provider": p, "error": _err_kind(e)})
             continue
         ms = int((time.perf_counter() - t) * 1000)
-        filtered = is_hallucination(r["text"], r["no_speech"], r["logprob"])
+        filtered = is_hallucination(r["text"], r["no_speech"], r["logprob"], len(pcm) / (SR * 2))
         log.info("stt %s %dms %.1fs filtered=%s hint=%s", p, ms, len(pcm) / (SR * 2), filtered, bool(hw))  # 내용은 남기지 않는다
         return {"text": "" if filtered else r["text"], "provider": p, "filtered": filtered, "ms": ms, "errors": errors}
     raise HTTPException(503, detail={"errors": errors})

@@ -407,41 +407,10 @@ struct WakePatch {
 /// 호출어 사전(전역) — config 호출어에 더할 받아쓰기 변형. 바로 모든 세션에 반영
 async fn wake_set(State(app): State<AppRef>, headers: HeaderMap, Json(b): Json<WakePatch>) -> R {
     authed(&app, &headers)?;
-    let cfg = app.cfg();
-    let Some(ch) = cfg.characters.get(&b.character) else {
-        return Err(err(StatusCode::BAD_REQUEST, "없는 캐릭터예요"));
-    };
-    let mut words: Vec<String> = Vec::new();
-    for w in b.words.iter().map(|w| w.trim()).filter(|w| !w.is_empty()) {
-        if w.chars().count() > 20 || w.chars().any(char::is_whitespace) {
-            return Err(err(StatusCode::BAD_REQUEST, "호출어는 띄어쓰기 없이 20자 이내"));
-        }
-        if !ch.wake.iter().any(|x| x == w) && !words.iter().any(|x| x == w) {
-            words.push(w.to_string());
-        }
+    match voice::set_wake_extra(&app, &b.character, &b.words).await {
+        Ok(words) => Ok(Json(json!({"ok": true, "words": words})).into_response()),
+        Err(e) => Err(err(StatusCode::BAD_REQUEST, &e)),
     }
-    if words.len() > 30 {
-        return Err(err(StatusCode::BAD_REQUEST, "추가 호출어는 30개까지"));
-    }
-    let mut all = ch.wake.clone();
-    all.extend(words.iter().cloned());
-    if crate::convo::Wake::compile(&all).is_err() {
-        return Err(err(StatusCode::BAD_REQUEST, "호출어로 쓸 수 없는 글자가 있어요"));
-    }
-    {
-        let mut st = app.store.lock().unwrap();
-        if words.is_empty() {
-            st.state.wake_extra.remove(&b.character);
-        } else {
-            st.state.wake_extra.insert(b.character.clone(), words.clone());
-        }
-    }
-    app.save_store();
-    let sessions: Vec<_> = app.sessions.lock().await.values().cloned().collect();
-    for s in sessions {
-        s.reload_wake(&app);
-    }
-    Ok(Json(json!({"ok": true, "words": words})).into_response())
 }
 
 #[derive(Deserialize)]
