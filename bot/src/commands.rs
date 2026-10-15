@@ -105,7 +105,7 @@ pub fn definitions(app: &AppRef) -> Vec<CreateCommand> {
             .add_option(
                 sub("말투", "캐릭터 말투(시스템 프롬프트)")
                     .add_sub_option(char_opt(app))
-                    .add_sub_option(CreateCommandOption::new(CommandOptionType::String, "내용", "비우면 기본값으로").max_length(1500)),
+                    .add_sub_option(CreateCommandOption::new(CommandOptionType::String, "내용", "비우면 기본값으로").max_length(3000)),
             )
             .add_option(sub("채널", "긴 답을 올릴 텍스트 채널").add_sub_option(text_ch()))
             .add_option(
@@ -906,8 +906,8 @@ pub fn help_embed(app: &AppRef, hey_only: bool) -> CreateEmbed {
             names.join(" · ")
         ))
         .field("누구나", "`/들어와` `/나가` `/잊어줘` `/상태` `/설정 보기` `/도움말`\n`/무시해줘` `/다시들어줘` — 내 목소리 안 듣기·다시 듣기\n`/모델` — 캐릭터 두뇌 바꾸기(목록에서 고르기)\n`/기억 보기·지우기` — \"○○ 기억해\"로 남긴 장기 기억", false)
-        .field("주인·서버 관리", "`/설정 두뇌·대체두뇌·목소리·말투·채널·주인없으면·호출방식·음성대답·음량·인사말·기억시간·초기화`\n`/채널지정` `/무시목록 유저추가·역할추가·…·보기`", false)
-        .field("주인", "`/설정 한도` `/공급자` `/설정다시읽기` · 웹 콘솔 voicebot.macham.net", false)
+        .field("주인·서버 관리", "`/설정 두뇌·대체두뇌·목소리·말투·채널·주인없으면·호출방식·음성대답·음량·인사말·기억시간·초기화`\n`/채널지정` `/무시목록 유저추가·역할추가·…·보기` `/기억 전부지우기`", false)
+        .field("주인", "`/설정 한도` `/설정 호출어` `/공급자` `/설정다시읽기` · 웹 콘솔 voicebot.macham.net", false)
         .footer(serenity::all::CreateEmbedFooter::new("음성은 저장하지 않고, 받아쓴 글은 정해진 시간만 기억했다가 지워요."))
 }
 

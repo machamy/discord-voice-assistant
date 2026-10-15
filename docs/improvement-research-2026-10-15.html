@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>아짱·클짱 — 실사용 개선 연구 (2026-10-15)</title>
+<style>
+  :root { --bg:#0f1115; --card:#171a21; --line:#2a2f3a; --fg:#e6e8ee; --dim:#9aa3b2; --ok:#4ade80; --bad:#f87171; --warn:#fbbf24; --acc:#f59e6b; --acc2:#7dd3fc; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.65 "Pretendard","Malgun Gothic",system-ui,sans-serif; }
+  header { padding:28px 32px 18px; border-bottom:1px solid var(--line); background:linear-gradient(120deg,#1d1410,#0f1115 45%,#0d1620); }
+  header h1 { margin:0 0 6px; font-size:24px; }
+  header p { margin:0; color:var(--dim); }
+  nav { position:sticky; top:0; z-index:5; background:#0f1115ee; backdrop-filter:blur(6px); border-bottom:1px solid var(--line); padding:8px 32px; display:flex; gap:16px; flex-wrap:wrap; }
+  nav a { color:var(--acc2); text-decoration:none; font-size:14px; }
+  main { max-width:1180px; margin:0 auto; padding:24px 32px 64px; }
+  section { margin:0 0 34px; }
+  h2 { font-size:20px; border-left:4px solid var(--acc); padding-left:10px; margin:28px 0 12px; }
+  h3 { font-size:16px; margin:20px 0 8px; color:var(--acc2); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:12px 0; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .kpi b { display:block; font-size:24px; color:var(--acc); }
+  .kpi span { color:var(--dim); font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; margin:8px 0; }
+  th, td { border-bottom:1px solid var(--line); padding:7px 8px; text-align:left; vertical-align:top; }
+  th { color:var(--dim); font-weight:600; background:#141820; position:sticky; top:41px; }
+  tr:hover td { background:#1a1e27; }
+  code, .mono { font-family:"Cascadia Code",Consolas,monospace; font-size:13px; }
+  code { background:#222733; padding:1px 5px; border-radius:4px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); } .dim { color:var(--dim); }
+  .tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:99px; border:1px solid var(--line); margin-right:4px; }
+  .tag.free { border-color:#2f6b45; color:var(--ok); } .tag.paid { border-color:#6b4a2f; color:var(--acc); } .tag.src2 { border-color:#6b5f2f; color:var(--warn); }
+  .bar { height:10px; background:#232836; border-radius:6px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:linear-gradient(90deg,var(--acc),#fcd34d); }
+  .timeline { display:flex; height:30px; border-radius:6px; overflow:hidden; border:1px solid var(--line); margin:8px 0 4px; }
+  .timeline div { display:flex; align-items:center; justify-content:center; font-size:12px; color:#111; white-space:nowrap; overflow:hidden; }
+  ul { margin:6px 0; padding-left:22px; }
+  .verdict { font-weight:700; }
+  footer { color:var(--dim); font-size:13px; border-top:1px solid var(--line); padding:18px 32px; }
+  a { color:var(--acc2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>아짱·클짱 — 두뇌 모델 · 받아쓰기 · 명령어 조사</h1>
+
+</head>
+<body>
+<header>
+  <h1>아짱·클짱 — 실사용 개선 연구</h1>
+  <p>2026-10-15 · 실사용 로그(4~5명 게임 잡담) 분석 + Codex 독립 코드 감사(gpt-5.6-sol xhigh, 읽기 전용) + 서브에이전트 웹 조사(받아쓰기·호출어 / 판단 모델·지연 / 페르소나). <span class="tag src2">추정</span> 표시는 실측이 아니다.</p>
+</header>
+<nav>
+  <a href="#sum">요약</a><a href="#data">실측</a><a href="#lat">응답 지연</a><a href="#wake">호출 인식</a><a href="#stt">받아쓰기</a><a href="#talk">대화 품질</a><a href="#persona">페르소나</a><a href="#ops">운영·보안</a><a href="#plan">개선 순서</a><a href="#done">이미 고친 것</a><a href="#src">출처</a>
+</nav>
+<main>
+
+<section id="sum">
+  <h2>요약</h2>
+  <div class="grid">
+    <div class="kpi"><b>0.86초</b><span>받아쓰기 중앙값 (1,156건, 10/15 저녁)</span></div>
+    <div class="kpi"><b>2.5~6초</b><span>혼자 부를 때 첫 소리 <span class="tag src2">추정</span> — 두뇌에 따라</span></div>
+    <div class="kpi"><b>10~13초</b><span>체감 지연(보고) — 주원인은 대답 대기열</span></div>
+    <div class="kpi"><b>18종</b><span>"클짱·아짱" 받아쓰기 변형 (실장·휘장·필장·클잭·악장…)</span></div>
+  </div>
+  <div class="card">
+    <ul>
+      <li><b>지연</b>: 대답 처리기가 하나뿐이고 앞 대답의 <b>음성 재생이 끝날 때까지</b>(8~12초) 다음 호출을 시작하지 않는다. Codex는 edge-tts의 <b>8초×2 재시도</b>도 같은 크기의 원인으로 지목했다. 둘 다 코드로 확인된다.</li>
+      <li><b>호출 인식</b>: "클짱"은 Whisper가 모르는 지어낸 낱말이라 비슷한 실제 낱말로 끌려간다. 모델을 바꿔도 크게 안 줄어든다(FLEURS 한국어 CER: turbo 5.24 / large-v3 4.89 / Qwen3-ASR-1.7B 4.60). 텍스트 힌트는 환각을 만든다(실측 63%/25%).</li>
+      <li><b>추천</b>: ① 대답 생성과 재생 분리 + 최신 호출 우선 ② 점수형 호출 판정(위험 별칭 등급·ASR 신뢰도·문맥, 애매할 때만 LLM 판단) ③ 짧은 조각 합치기·잡음 사유 분리 ④ edge-tts 재시도 제거·회로 차단기 ⑤ 호출 시점 컨텍스트 고정·출력 검증 ⑥ 페르소나를 캐릭터 카드 구조로.</li>
+      <li><b>버튼 호출</b>: 디스코드 음성 채널 이모지 반응·사운드보드 이벤트(<code>VOICE_CHANNEL_EFFECT_SEND</code>)로 설치 없이 "딸깍" 호출이 가능할 수 있다(serenity 지원 여부 확인 필요).</li>
+    </ul>
+  </div>
+</section>
+
+<section id="data">
+  <h2>실측 (2026-10-15 저녁, 친구 서버)</h2>
+  <table>
+    <tr><th>항목</th><th>값</th><th>비고</th></tr>
+    <tr><td>받아쓰기 호출</td><td>1,156건</td><td>local-whisper cuda large-v3-turbo int8</td></tr>
+    <tr><td>받아쓰기 지연 p50 / p90 / p99</td><td>0.86 / 1.95 / 3.64초</td><td>21:26~22:05 측정 벤치가 GPU를 같이 써서 꼬리가 길다. 벤치 중단 뒤 0.77초대</td></tr>
+    <tr><td>발화 길이 p50 / p90</td><td>2.1 / 5.3초</td><td>1초 미만 9.9%</td></tr>
+    <tr><td>환각으로 거름</td><td>7.8%</td><td>필터 확장 전후 섞임</td></tr>
+    <tr><td>잡음 버림</td><td>세션 발화의 약 35~55%</td><td>0.5~1초 조각. 짧아서인지 작아서인지 지금은 구분 못 함</td></tr>
+    <tr><td>두뇌 "말 도착"(첫 문장)</td><td>groq-free 0.4~1.5초 · haiku 1.2~2.8초 · sonnet 1.9~3.3초 · opus 1.9~3.9초</td><td>로그 28건</td></tr>
+    <tr><td>"tts+재생"</td><td>sonnet·haiku 8.6~12.5초</td><td>음성을 끝까지 재생한 시간까지 포함 — 이 동안 대답 처리기가 막힌다</td></tr>
+    <tr><td>프롬프트 캐시</td><td>sonnet 10건 중 읽기 0건, opus 연속 호출 때만 읽힘</td><td>호출 간격이 5분 캐시 수명보다 길었음</td></tr>
+  </table>
+  <h3>"클짱·아짱"이 받아써진 모양</h3>
+  <div class="card mono">클짱 → 실장(3) · 휘장 · 휠장 · 필장(4) · 일장 · 일창 · 글쨍 · 글쩡 · 글정 · 헐쩡 · 클징 · 클잭 · 에이클잭 · 결정 · 별덕 · 배짱 · 대장<br>아짱 → 악장 · 약정 · 앗장 · 야정 · 야쩡</div>
+  <p class="dim">사전에 넣은 뒤 "필장 그럼 나랑 끝말잇기", "휠장, 나는", "휘장?", "필장 듣고 있는 거 맞지?"는 걸렸다. 첫소리(ㅋ→ㅍ/ㅎ/ㄱ/ㅅ)까지 바뀌어 자모 거리만으로는 한계.</p>
+</section>
+
+<section id="lat">
+  <h2>응답 지연 — 어디서 생기나</h2>
+  <div class="timeline">
+    <div style="flex:6;background:#7dd3fc">말 끝 0.6</div>
+    <div style="flex:8;background:#a5b4fc">받아쓰기 0.8</div>
+    <div style="flex:15;background:#f59e6b">두뇌 첫 문장 0.4~3.9</div>
+    <div style="flex:7;background:#fcd34d">TTS 0.65</div>
+    <div style="flex:30;background:#f87171">앞 대답 재생 대기 0~12</div>
+  </div>
+  <p class="dim">막대 비율은 대략. 빨간 구간은 연속으로 부를 때만 생긴다.</p>
+  <table>
+    <tr><th>원인</th><th>근거(코드)</th><th>크기</th><th>개선</th></tr>
+    <tr><td><b>대답 처리기가 재생 끝까지 대기</b></td><td><code>voice.rs answer_worker</code> → <code>play()</code>가 Track End까지 기다림</td><td class="bad">0~12초</td><td>생성(두뇌·TTS)과 재생을 분리, 새 호출이 오면 오래된 대답 취소</td></tr>
+    <tr><td><b>edge-tts 8초 제한 × 2회 시도</b></td><td><code>sidecar/app.py tts_edge</code></td><td class="bad">장애 시 8~16초</td><td>첫 실패 후 다음 공급자로, 최근 실패 공급자는 30~60초 건너뛰기</td></tr>
+    <tr><td>받아쓰기도 세션당 한 줄 + Whisper 전역 잠금</td><td><code>stt_worker</code>, <code>LocalWhisper.lock</code></td><td class="warn">동시 발화 n개 × 0.8초</td><td>호출어 후보 발화 우선 처리, 대기·드롭 통계</td></tr>
+    <tr><td>두뇌 실패 판정 20초</td><td><code>llm.rs</code> 첫 바이트·정지 제한</td><td class="warn">장애 시 20초</td><td>무료 두뇌는 3초, 회로 차단기</td></tr>
+    <tr><td>대화 기록 15분(최대 4만 자) 전부 전송</td><td><code>llm.rs MAX_PROMPT_CHARS</code></td><td class="warn">첫 토큰 지연·Groq 분당 토큰 한도</td><td>최근 2~3분 + 관련 기억만</td></tr>
+    <tr><td>TTS를 말 전체 완성 후 한 번에</td><td><code>SpeechHook</code>, <code>/tts</code></td><td>0.3~1초</td><td>첫 문장 단위 합성·오디오 스트리밍</td></tr>
+    <tr><td>놓친 호출 → 다시 부름</td><td>호출 인식 문제</td><td>체감 +수 초</td><td>호출 인식 개선, 알아들었다는 짧은 소리("응?")</td></tr>
+  </table>
+  <p>계측도 부족하다. 지금 "첫 소리 지연"은 TTS 직후·재생 전 시각이고 메모리에만 있어 재시작 때 사라진다. 호출마다 <b>말 끝 → 받아쓰기 대기 → 받아쓰기 완료 → 대답 대기 → 두뇌 첫 문장 → TTS → 재생 시작</b>을 기록해 웹 콘솔에 폭포 그래프로 보이게 하는 것이 1순위 계측이다(Codex·조사 공통).</p>
+</section>
+
+<section id="wake">
+  <h2>호출 인식 — 받아쓰기보다 판정을 고친다</h2>
+  <table>
+    <tr><th>방법</th><th>효과</th><th>비용·지연</th><th>개인정보</th><th>판단</th></tr>
+    <tr><td><b>점수형 판정기</b> — 정확한 이름·헤이·호격·문장 처음 = 강, 자모 거리·위험 별칭 = 중, 조사 언급·낮은 logprob = 약</td><td>위험 별칭(실장·악장·약정)을 넣어도 오호출 억제</td><td>0원, 0ms</td><td>로컬</td><td class="ok">1순위 (Codex)</td></tr>
+    <tr><td><b>애매할 때만 LLM 판단</b> — 최근 몇 줄 + 후보 발화 → JSON</td><td>"실장 나에 대해 어떻게 생각해?" 같은 문맥 호출 복원, 언급 거르기</td><td>Groq 무료. 후보만이면 시간당 50~130회로 한도 안(모든 발화면 시간당 약 1,580회 → 무료 불가). +0.3~1.2초, 넘으면 규칙 결과</td><td>대화 몇 줄이 Groq로</td><td class="ok">2순위</td></tr>
+    <tr><td>두 가설 재채점 — 원문 vs "클짱"으로 바꾼 문장 점수 비교</td><td>새 글자를 만들지 않아 환각 경로 없음</td><td>후보만 +0.2~0.4초 <span class="tag src2">추정</span></td><td>로컬</td><td class="warn">CTranslate2에서 가능한지 확인 필요</td></tr>
+    <tr><td>sherpa-onnx 한국어 zipformer + hotwords(CPU 병행)</td><td>호출어 2차 검출</td><td>CPU 실시간의 약 1/10, 학습 불필요</td><td>로컬</td><td class="warn">오탐률 측정 후</td></tr>
+    <tr><td>openWakeWord 직접 학습</td><td>음향 단위 호출어 검출</td><td>녹음·학습 필요</td><td>로컬</td><td class="dim">데이터 쌓인 뒤</td></tr>
+    <tr><td>Picovoice Porcupine(한국어 지원)</td><td>정확</td><td class="bad">무료 등급 2026-06-30 종료 보고, 유료 월 $500~</td><td>로컬</td><td class="bad">탈락</td></tr>
+    <tr><td>Whisper hotwords / initial_prompt</td><td>이름은 잘 적지만</td><td>—</td><td>로컬</td><td class="bad">실측 오탐 1초 63%·1.5초 25% → 기본 끔</td></tr>
+    <tr><td>Deepgram Nova-3 keyterm</td><td>환각 없는 부스팅</td><td>분당 약 $0.0061, $200 크레딧</td><td class="bad">음성이 외부로</td><td class="dim">한국어 keyterm 동작 확인 필요</td></tr>
+    <tr><td><b>버튼·이모지 호출</b></td><td>받아쓰기와 무관하게 확실</td><td>0원</td><td>—</td><td class="ok">병행 추천</td></tr>
+    <tr><td>Whisper가 아는 별명(예: 클로드)</td><td>즉시 효과</td><td>0원</td><td>—</td><td class="ok">지금 가능(<code>/설정 호출어</code>)</td></tr>
+  </table>
+  <h3>추가로 고칠 규칙</h3>
+  <ul>
+    <li>이름만 들리면 다음 발화를 8초 동안 무조건 질문으로 받는 규칙 축소 — 이름 환각 한 번이 다음 정상 발화까지 오호출로 번진다(Codex).</li>
+    <li>의문문 판정이 받아쓰기 물음표에 기대는 부분은 문장부호 변동에 약하다.</li>
+    <li>호출 판정 근거(어떤 별칭·거리·규칙)를 기록하고 웹 콘솔에 "오호출/놓침" 버튼 → 임계값을 데이터로 조정.</li>
+  </ul>
+</section>
+
+<section id="stt">
+  <h2>받아쓰기 품질</h2>
+  <table>
+    <tr><th>제안</th><th>근거</th><th>우선</th></tr>
+    <tr><td>잡음 버림 사유 분리(짧음·작음·VAD·대기열 가득) + RMS/peak 기록</td><td>지금은 전부 "잡음 버림" 하나 → <code>min_level=120</code>을 조절할 근거가 없다</td><td class="ok">높음</td></tr>
+    <tr><td>짧은 조각을 버리지 말고 같은 사람의 다음 조각과 합치기</td><td>0.5~1초 대답·호출어 보존</td><td class="ok">높음</td></tr>
+    <tr><td>패킷 유무 대신 PCM 기반 VAD(Silero 등)·적응형 소음 바닥</td><td>발화 끝 = 디스코드 speaking 신호가 끊긴 횟수만 셈</td><td class="warn">중간</td></tr>
+    <tr><td>Whisper 세그먼트별 환각 판정</td><td>세그먼트들의 최악 값끼리 조합해 정상 문장도 버릴 수 있음</td><td class="warn">중간</td></tr>
+    <tr><td>beam 1/2/3·온도 A/B(실통화 세트)</td><td>지금 beam 1 고정</td><td class="dim">녹음 동의 후</td></tr>
+    <tr><td>모델 교체(large-v3 / Qwen3-ASR-0.6B FP32)</td><td>Pascal은 FP16 사실상 불가. large-v3는 발화당 2~3초 <span class="tag src2">추정</span>, Qwen3-ASR-0.6B는 이 카드 속도 자료 없음, Parakeet/Canary는 한국어 없음</td><td class="dim">측정 후</td></tr>
+  </table>
+</section>
+
+<section id="talk">
+  <h2>대화 품질 · 비용</h2>
+  <ul>
+    <li><b>호출 시점 컨텍스트 고정</b>: 지금은 대답 처리기가 나중에 버퍼를 다시 읽어, 대기 중 나온 "미래 대화"가 섞이고 질문이 기록과 질문란에 두 번 들어간다.</li>
+    <li><b>기록은 "믿지 않는 데이터"로</b> 구분해 전달(음성으로 들어온 지시문이 명령처럼 먹히는 프롬프트 주입 완화).</li>
+    <li><b>출력 검증</b>: <code>&lt;말&gt;/&lt;글&gt;</code> 형식 강제, 지시문·태그 노출 시 한 번 다시 생성. 기본 <code>max_tokens</code> 1500 → 400~600, 800자 서버측 절단.</li>
+    <li><b>기억 도구 이중 확인</b>: 질문에 "기억해/잊어" 의도가 실제로 있을 때만 적용. 기억은 부른 사람·대화에 나온 사람 것만 넣기.</li>
+    <li><b>반복 억제</b>: Groq는 frequency/presence penalty 미지원 → 직전 대답 몇 개를 넣고 비슷하면 재생성.</li>
+    <li><b>비용</b>: <code>/모델</code>로 누구나 유료 프리셋(sonnet·opus)을 고를 수 있다 — 오늘 opus 1회 약 $0.035. 유료는 관리자만, 또는 하루 상한을 더 낮게.</li>
+    <li><b>캐시</b>: 시스템·페르소나 전용 캐시 지점 분리, 캐시 적중률을 웹 콘솔에 표시.</li>
+  </ul>
+</section>
+
+<section id="persona">
+  <h2>페르소나 — AI 챗 캐릭터 방식</h2>
+  <div class="card"><p><b>조사 결론</b>(SillyTavern 캐릭터 카드 V2/V3, Character.AI 정의, RisuAI·국내 캐릭터 챗 가이드, AI 버튜버 kimjammer/Neuro·Open-LLM-VTuber, LiveKit·OpenAI 실시간 음성 프롬프트 가이드, Anthropic 문서):</p>
+<ul>
+  <li><b>형용사보다 예시 대화</b>가 말투를 만든다(Ali:Chat, Anthropic "예시가 가장 믿을 만한 조종 수단"). 예전 페르소나는 형용사 3줄뿐이었다.</li>
+  <li><b>"가끔, 과하지 않게"는 말버릇을 0으로 수렴</b>시킨다 → "한 대답에 하나쯤 + 후보를 돌려 쓰기".</li>
+  <li><b>꺾쇠 안 설명문</b>(<code>&lt;말&gt;음성으로 읽을 1~2문장…&lt;/말&gt;</code>)을 작은 모델이 그대로 옮긴다 → 형식은 예시로만, 설명은 꺾쇠 밖.</li>
+  <li><b>질문 바로 뒤 한 줄 상기 문구</b>(SillyTavern <code>post_history_instructions</code>, CCv3 <code>@@depth 0</code>) — 대화가 길어져도 말투 유지. 캐시 지점 뒤라 비용이 거의 없다. Groq gpt-oss는 우리 system이 developer 등급으로 들어가 특히 효과가 크다.</li>
+  <li><b>"이것만 사실이다" 목록 + 모를 때 할 대사</b>로 자기 설정 지어내기 차단(검색·도구 없음도 명시).</li>
+  <li><b>같은 말 되풀이 금지 규칙</b>을 따로(OpenAI Realtime 가이드의 Variety 규칙).</li>
+</ul>
+<p><b>적용(10/15)</b>: 클짱·아짱 페르소나를 캐릭터 카드 구조(정체성 → 행동으로 쓴 성격 → 말투 규칙 → 좋아함/싫어함 → 관계 → 내가 아는 나 → 예시 6개 → 금지)로 교체(각 약 2,100자), 공통 규칙에서 꺾쇠 안 설명문 제거·되풀이 금지 추가, 캐릭터별 <code>reminder</code> 설정 추가. 웹 콘솔 말투 한도 1,500 → 3,000자, 기본값과 같은 말투는 덮어쓰기로 저장하지 않게 고침(웹 콘솔 저장 때 옛 기본값이 서버 덮어쓰기로 박혀 새 페르소나를 가리던 문제).</p>
+<table>
+  <tr><th>시험(두뇌 시험 API)</th><th>Haiku</th><th>Groq 무료</th></tr>
+  <tr><td>"클짱"(이름만)</td><td>응? 나 불렀어? / 응응, 나 여기 있당.</td><td>헤이, 뭐야? 여기 있당!</td></tr>
+  <tr><td>"오 클짱 오늘 좀 똑똑한데?"</td><td>에, 에헤헤… 갑자기 칭찬하면 쑥스럽잖아. <span class="warn">(예시 그대로)</span></td><td>어? 고마워 마참아, 오늘 똑똑해 보인다당!</td></tr>
+  <tr><td>"나 롤 세 판 연속 졌어"</td><td>헉, 세 판이나? … 다음 판은 이길 거징. <span class="warn">(예시 그대로)</span></td><td>헉, 세 판이나? 운이 안 좋았구나당.</td></tr>
+  <tr><td>"너 무슨 모델 써?"</td><td>Claude 바탕 캐릭터, 버전은 확인 못 함 <span class="warn">(말이 3문장으로 김)</span></td><td>(무료 한도 초과 502)</td></tr>
+  <tr><td>형식 정상</td><td class="ok">5/5</td><td class="ok">3/3</td></tr>
+</table>
+<p class="dim">남은 과제: 질문이 예시와 같으면 예시 문장을 베낀다 → 예시를 실사용과 다른 상황으로 바꾸거나 "베끼지 말 것" 강화, 말이 길면 서버에서 첫 1~2문장만 읽기. 같은 질문 세트로 존댓말 비율·말버릇 빈도·중복·형식 오류·지시문 누출을 세는 정기 평가를 두자(조사 D절). 예시의 "민수"는 자리표시자다(실제 친구 이름은 공개 저장소에 넣지 않음).</p>
+</div>
+</section>
+
+<section id="ops">
+  <h2>운영 · 보안</h2>
+  <table>
+    <tr><th>제안</th><th>근거</th><th>우선</th></tr>
+    <tr><td>재시작 뒤 자동 재입장(마지막 음성 채널 저장)</td><td>업데이트·재부팅마다 봇이 채널에서 빠짐(오늘 여러 번)</td><td class="ok">높음</td></tr>
+    <tr><td>수동 퇴장과 예상치 못한 끊김 구분·제한적 자동 복구</td><td>봇 음성 상태가 없어지면 세션을 통째로 지움</td><td class="ok">높음</td></tr>
+    <tr><td>작업자(받아쓰기·대답·웹) 감시, 사이드카 실제 추론 watchdog</td><td>패닉 시 조용히 고장, <code>/health</code>만 봄</td><td class="ok">높음</td></tr>
+    <tr><td>LAN 평문 콘솔 차단(8694는 NAS 터널만), 보안 헤더</td><td>LAN HTTP에서 쿠키 Secure 없음</td><td class="ok">높음</td></tr>
+    <tr><td>고지문에 외부 전송(두뇌 공급자) 명시</td><td>지금은 저장 기간·거부 방법만</td><td class="ok">높음</td></tr>
+    <tr><td><code>/나가</code>·<code>/잊어줘</code>·유료 <code>/모델</code> 권한 재조정</td><td>누구나 즉시 실행</td><td class="warn">중간</td></tr>
+    <tr><td>웹 콘솔 미리 듣기가 설정을 저장하지 않게</td><td><code>preview()</code>가 먼저 저장</td><td class="warn">중간</td></tr>
+    <tr><td>Python 의존성 고정(edge-tts·fastapi 등)</td><td>무고정</td><td class="warn">중간</td></tr>
+  </table>
+</section>
+
+<section id="plan">
+  <h2>개선 순서 (제안)</h2>
+  <table>
+    <tr><th>#</th><th>작업</th><th>기대 효과</th><th>난이도</th></tr>
+    <tr><td>1</td><td>단계별 지연 계측 + 웹 콘솔 폭포 그래프, 잡음 버림 사유 분리</td><td>추측 없이 원인 확정</td><td>낮음</td></tr>
+    <tr><td>2</td><td>대답 생성·재생 분리 + 최신 호출 우선·취소, edge 재시도 제거·회로 차단기, 무료 두뇌 3초 타임아웃</td><td>연속 호출 지연 수~십 초 단축</td><td>중간</td></tr>
+    <tr><td>3</td><td>점수형 호출 판정(별칭 안전/위험 등급) + 애매할 때만 Groq 판단 모델 + 판정 근거 기록·피드백 버튼</td><td>놓침·오호출 동시 감소</td><td>중간</td></tr>
+    <tr><td>4</td><td>페르소나 캐릭터 카드 구조(예시 대화·말투 규칙·대답 직전 상기 문구) + 출력 검증·재생성</td><td>말투·반복·지시문 노출</td><td>낮음~중간</td></tr>
+    <tr><td>5</td><td>짧은 조각 합치기, 호출 시점 컨텍스트 고정, 기록 2~3분으로</td><td>짧은 호출 보존·첫 토큰 단축</td><td>중간</td></tr>
+    <tr><td>6</td><td>재시작 자동 재입장·작업자 감시·LAN 콘솔 차단·고지문</td><td>운영 안정</td><td>중간</td></tr>
+    <tr><td>7</td><td>버튼·이모지 호출(VOICE_CHANNEL_EFFECT_SEND) → 데스크톱 단축키 도우미</td><td>확실한 호출 수단</td><td>중간</td></tr>
+    <tr><td>8</td><td>(측정 후) sherpa-onnx 2차 호출어 검출, Qwen3-ASR-0.6B·large-v3 속도</td><td>음향 단위 호출어</td><td>높음</td></tr>
+  </table>
+</section>
+
+<section id="done">
+  <h2>이번 주기에 이미 고친 것 (10/15)</h2>
+  <ul>
+    <li><b>음성 수신</b>: 수신기를 접속 <i>전에</i> 등록 — 핸드셰이크 중 Speaking을 놓쳐 입장할 때마다 아무도 못 알아듣던 문제(수정 후 입장 즉시 5명 연결, "누구인지 모름" 0).</li>
+    <li>부름/언급 구분, 추가 호출어(<code>/설정 호출어</code>·웹 콘솔, 실사용 변형 18개), 헤이 뒤 자모 거리 퍼지.</li>
+    <li>환각 필터(수고하셨습니다·안녕히 계세요 단독, 가나·키릴 섞임, 짧은 영어 한 줄).</li>
+    <li>자기 대답은 짧은 <code>&lt;말&gt;</code>만 기록, 프롬프트에 자기 구성·소리 못 들음·반복 금지.</li>
+    <li>장기 기억 도구, 입출력 원문 보기, 입장 인사 켜기/끄기, 입장·퇴장 기록, 받아쓰기 상황 화면, 수신 진단.</li>
+    <li>받아쓰기 힌트 측정: 1초 63%·1.5초 25% 오탐 → 기본 끔.</li>
+  </ul>
+</section>
+
+<section id="src">
+  <h2>출처</h2>
+  <ul class="mono" style="font-size:12px">
+    <li><a href="https://ai.google.dev/gemini-api/docs/rate-limits">https://ai.google.dev/gemini-api/docs/rate-limits</a></li>
+    <li><a href="https://ai.google.dev/gemini-api/terms">https://ai.google.dev/gemini-api/terms</a></li>
+    <li><a href="https://arxiv.org/html/2512.21828v1">https://arxiv.org/html/2512.21828v1</a></li>
+    <li><a href="https://arxiv.org/pdf/2406.15516">https://arxiv.org/pdf/2406.15516</a></li>
+    <li><a href="https://arxiv.org/pdf/2608.05759">https://arxiv.org/pdf/2608.05759</a></li>
+    <li><a href="https://azure.microsoft.com/pricing/details/cognitive-services/speech-services">https://azure.microsoft.com/pricing/details/cognitive-services/speech-services</a></li>
+    <li><a href="https://blog.meganova.ai/how-to-use-post-history-instructions-to-prevent-character-drift">https://blog.meganova.ai/how-to-use-post-history-instructions-to-prevent-character-drift</a></li>
+    <li><a href="https://blog.meganova.ai/why-your-ai-character-breaks-after-10-messages">https://blog.meganova.ai/why-your-ai-character-breaks-after-10-messages</a></li>
+    <li><a href="https://cdn.openai.com/API/docs/realtime-prompting-guide.pdf">https://cdn.openai.com/API/docs/realtime-prompting-guide.pdf</a></li>
+    <li><a href="https://characterai.it.com/?p=3083">https://characterai.it.com/?p=3083</a></li>
+    <li><a href="https://community.groq.com/t/gpt-oss-120b-degraded-performance-not-following-instructions-as-it-did-last-week/916">https://community.groq.com/t/gpt-oss-120b-degraded-performance-not-following-instructions-as-it-did-last-week/916</a></li>
+    <li><a href="https://community.home-assistant.io/t/custom-non-english-wake-words-for-home-assistant-93-recall-fully-offline-onnx-100-kb/1021320">https://community.home-assistant.io/t/custom-non-english-wake-words-for-home-assistant-93-recall-fully-offline-onnx-100-kb/1021320</a></li>
+    <li><a href="https://community.home-assistant.io/t/fyi-picovoice-confirmed-free-tier-accesskeys-will-stop-working-after-june-30-2026/1012744">https://community.home-assistant.io/t/fyi-picovoice-confirmed-free-tier-accesskeys-will-stop-working-after-june-30-2026/1012744</a></li>
+    <li><a href="https://console.groq.com/docs/api-reference">https://console.groq.com/docs/api-reference</a></li>
+    <li><a href="https://console.groq.com/docs/rate-limits">https://console.groq.com/docs/rate-limits</a></li>
+    <li><a href="https://dasha.ai/blog/speech-to-text-pricing">https://dasha.ai/blog/speech-to-text-pricing</a></li>
+    <li><a href="https://deepgram.com/pricing">https://deepgram.com/pricing</a></li>
+    <li><a href="https://developers.deepgram.com/docs/build-voice-agent-with-pipecat-and-deepgram">https://developers.deepgram.com/docs/build-voice-agent-with-pipecat-and-deepgram</a></li>
+    <li><a href="https://developers.deepgram.com/docs/keyterm">https://developers.deepgram.com/docs/keyterm</a></li>
+    <li><a href="https://developers.deepgram.com/docs/models-languages-overview">https://developers.deepgram.com/docs/models-languages-overview</a></li>
+    <li><a href="https://developers.deepgram.com/docs/tts-text-chunking">https://developers.deepgram.com/docs/tts-text-chunking</a></li>
+    <li><a href="https://developers.openai.com/api/docs/pricing">https://developers.openai.com/api/docs/pricing</a></li>
+    <li><a href="https://developers.openai.com/cookbook/articles/openai-harmony">https://developers.openai.com/cookbook/articles/openai-harmony</a></li>
+    <li><a href="https://developers.openai.com/cookbook/examples/realtime_prompting_guide">https://developers.openai.com/cookbook/examples/realtime_prompting_guide</a></li>
+    <li><a href="https://developers.rtzr.ai/docs/en/pricing/">https://developers.rtzr.ai/docs/en/pricing/</a></li>
+    <li><a href="https://discuss.huggingface.co/t/streamer-ai-like-neuro-sama/33836">https://discuss.huggingface.co/t/streamer-ai-like-neuro-sama/33836</a></li>
+    <li><a href="https://docs.channel.io/carat/ko/articles/AI-%EC%B1%84%ED%8C%85-%EC%BA%90%EB%A6%AD%ED%84%B0%EB%8A%94-%EC%96%B4%EB%96%BB%EA%B2%8C-%EB%A7%8C%EB%93%9C%EB%82%98%EC%9A%94-762404c3">https://docs.channel.io/carat/ko/articles/AI-%EC%B1%84%ED%8C%85-%EC%BA%90%EB%A6%AD%ED%84%B0%EB%8A%94-%EC%96%B4%EB%96%BB%EA%B2%8C-%EB%A7%8C%EB%93%9C%EB%82%98%EC%9A%94-762404c3</a></li>
+    <li><a href="https://docs.claude.com/en/docs/agents-and-tools/tool-use/memory-tool">https://docs.claude.com/en/docs/agents-and-tools/tool-use/memory-tool</a></li>
+    <li><a href="https://docs.cloud.google.com/speech-to-text/docs/models/chirp-3">https://docs.cloud.google.com/speech-to-text/docs/models/chirp-3</a></li>
+    <li><a href="https://docs.discord.com/developers/events/gateway-events">https://docs.discord.com/developers/events/gateway-events</a></li>
+    <li><a href="https://docs.google.com/document/d/1qvcvZWhp24p14dsMlmj7vN4cM5RTDSj0gLaZSl1PPO8/mobilebasic">https://docs.google.com/document/d/1qvcvZWhp24p14dsMlmj7vN4cM5RTDSj0gLaZSl1PPO8/mobilebasic</a></li>
+    <li><a href="https://docs.livekit.io/agents/build/prompting">https://docs.livekit.io/agents/build/prompting</a></li>
+    <li><a href="https://docs.livekit.io/agents/build/turns/turn-detector">https://docs.livekit.io/agents/build/turns/turn-detector</a></li>
+    <li><a href="https://docs.livekit.io/reference/agents/turn-handling-options.md">https://docs.livekit.io/reference/agents/turn-handling-options.md</a></li>
+    <li><a href="https://docs.llmvtuber.com/en/docs/user-guide/backend/character_settings">https://docs.llmvtuber.com/en/docs/user-guide/backend/character_settings</a></li>
+    <li><a href="https://docs.pipecat.ai/pipecat/learn/speech-input.md">https://docs.pipecat.ai/pipecat/learn/speech-input.md</a></li>
+    <li><a href="https://docs.platform.qianwenai.com/developer-guides/accuracy-tuning/speech-recognition">https://docs.platform.qianwenai.com/developer-guides/accuracy-tuning/speech-recognition</a></li>
+    <li><a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/">https://docs.sillytavern.app/usage/core-concepts/characterdesign/</a></li>
+    <li><a href="https://docs.sillytavern.app/usage/core-concepts/groupchats/">https://docs.sillytavern.app/usage/core-concepts/groupchats/</a></li>
+    <li><a href="https://eesel.ai/blog/groq-pricing">https://eesel.ai/blog/groq-pricing</a></li>
+    <li><a href="https://github.com/kimjammer/Neuro">https://github.com/kimjammer/Neuro</a></li>
+    <li><a href="https://github.com/kwaroran/character-card-spec-v3/blob/main/SPEC_V3.md">https://github.com/kwaroran/character-card-spec-v3/blob/main/SPEC_V3.md</a></li>
+    <li><a href="https://github.com/malfoyslastname/character-card-spec-v2/blob/main/spec_v2.md">https://github.com/malfoyslastname/character-card-spec-v2/blob/main/spec_v2.md</a></li>
+    <li><a href="https://hexdocs.pm/whisper_cpp/WhisperCpp.Word.html">https://hexdocs.pm/whisper_cpp/WhisperCpp.Word.html</a></li>
+    <li><a href="https://huggingface.co/BuzzASR/korean">https://huggingface.co/BuzzASR/korean</a></li>
+    <li><a href="https://huggingface.co/FunAudioLLM/Fun-ASR-MLT-Nano-2512">https://huggingface.co/FunAudioLLM/Fun-ASR-MLT-Nano-2512</a></li>
+    <li><a href="https://huggingface.co/TeamUNIVA/qwen3_asr_1.7b_ko_beta">https://huggingface.co/TeamUNIVA/qwen3_asr_1.7b_ko_beta</a></li>
+    <li><a href="https://k2-fsa.github.io/sherpa/onnx/hotwords/index.html">https://k2-fsa.github.io/sherpa/onnx/hotwords/index.html</a></li>
+    <li><a href="https://k2-fsa.github.io/sherpa/onnx/kws/index.html">https://k2-fsa.github.io/sherpa/onnx/kws/index.html</a></li>
+    <li><a href="https://k2-fsa.github.io/sherpa/onnx/pretrained_models/online-transducer/zipformer-transducer-models.html">https://k2-fsa.github.io/sherpa/onnx/pretrained_models/online-transducer/zipformer-transducer-models.html</a></li>
+    <li><a href="https://kotaku.com/vtuber-twitch-holocaust-denial-minecraft-ai-chatgpt-1849960527">https://kotaku.com/vtuber-twitch-holocaust-denial-minecraft-ai-chatgpt-1849960527</a></li>
+    <li><a href="https://livekit.com/field-guides/guide/homepage-agent-latency">https://livekit.com/field-guides/guide/homepage-agent-latency</a></li>
+    <li><a href="https://localaimaster.com/blog/groq-api-free-guide">https://localaimaster.com/blog/groq-api-free-guide</a></li>
+    <li><a href="https://models.handy.computer/languages/ko">https://models.handy.computer/languages/ko</a></li>
+    <li><a href="https://neuronfeed.com/startups/risuai">https://neuronfeed.com/startups/risuai</a></li>
+    <li><a href="https://picovoice.ai/blog/multilingual-voice-user-interfaces">https://picovoice.ai/blog/multilingual-voice-user-interfaces</a></li>
+    <li><a href="https://picovoice.ai/pricing">https://picovoice.ai/pricing</a></li>
+    <li><a href="https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices">https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices</a></li>
+    <li><a href="https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/increase-consistency">https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/increase-consistency</a></li>
+    <li><a href="https://raw.githubusercontent.com/kimjammer/Neuro/master/constants.py">https://raw.githubusercontent.com/kimjammer/Neuro/master/constants.py</a></li>
+    <li><a href="https://raw.githubusercontent.com/Open-LLM-VTuber/Open-LLM-VTuber/main/config_templates/conf.default.yaml">https://raw.githubusercontent.com/Open-LLM-VTuber/Open-LLM-VTuber/main/config_templates/conf.default.yaml</a></li>
+    <li><a href="https://rentry.co/kingbri-chara-guide">https://rentry.co/kingbri-chara-guide</a></li>
+    <li><a href="https://simbavoice.ai/resources/streaming-llm-outputs-to-voice-the-engineering">https://simbavoice.ai/resources/streaming-llm-outputs-to-voice-the-engineering</a></li>
+    <li><a href="https://smallest.ai/blog/is-google-cloud-speech-to-text-still-the-right-choice">https://smallest.ai/blog/is-google-cloud-speech-to-text-still-the-right-choice</a></li>
+    <li><a href="https://soniqo.audio/guides/vad/android">https://soniqo.audio/guides/vad/android</a></li>
+    <li><a href="https://support.discord.com/hc/en-us/community/posts/15432500270359">https://support.discord.com/hc/en-us/community/posts/15432500270359</a></li>
+    <li><a href="https://tilnote.io/pages/6a0bffc23bfab6e3928c0fb0">https://tilnote.io/pages/6a0bffc23bfab6e3928c0fb0</a></li>
+    <li><a href="https://voxbooster.com/blog/discord-soundboard-hotkeys-setup-2026/">https://voxbooster.com/blog/discord-soundboard-hotkeys-setup-2026/</a></li>
+    <li><a href="https://wikidocs.net/337749">https://wikidocs.net/337749</a></li>
+    <li><a href="https://www.assemblyai.com/pricing.md">https://www.assemblyai.com/pricing.md</a></li>
+    <li><a href="https://www.daily.co/blog/announcing-smart-turn-v3-with-cpu-inference-in-just-12ms/">https://www.daily.co/blog/announcing-smart-turn-v3-with-cpu-inference-in-just-12ms/</a></li>
+    <li><a href="https://www.dexerto.com/twitch/an-ai-powered-vtuber-is-now-the-most-popular-streamer-on-twitch-3300052/">https://www.dexerto.com/twitch/an-ai-powered-vtuber-is-now-the-most-popular-streamer-on-twitch-3300052/</a></li>
+    <li><a href="https://www.eesel.ai/blog/claude-haiku-5-5-pricing">https://www.eesel.ai/blog/claude-haiku-5-5-pricing</a></li>
+    <li><a href="https://www.eweek.com/fr/news/openai-realtime-prompting-tips/">https://www.eweek.com/fr/news/openai-realtime-prompting-tips/</a></li>
+    <li><a href="https://www.mintlify.com/openai/whisper/guides/word-timestamps">https://www.mintlify.com/openai/whisper/guides/word-timestamps</a></li>
+    <li><a href="https://www.morphllm.com/groq-pricing">https://www.morphllm.com/groq-pricing</a></li>
+    <li><a href="https://www.promptquorum.com/ko/power-local-llm/risuai-review">https://www.promptquorum.com/ko/power-local-llm/risuai-review</a></li>
+    <li><a href="https://www.roborhythms.com/?p=26892">https://www.roborhythms.com/?p=26892</a></li>
+    <li><a href="https://yingtu.ai/en/blog/google-gemini-api-free-tier-limits-2026">https://yingtu.ai/en/blog/google-gemini-api-free-tier-limits-2026</a></li>
+  </ul>
+  <p class="dim">조사 원문: <code>.claude/tmp/research-stt-wake.md</code>, <code>research-decision-latency.md</code>, <code>research-persona.md</code>, <code>codex-improve.md</code>(저장소 밖 작업 파일).</p>
+</section>
+</main>
+<footer>아짱·클짱 개선 연구 · 2026-10-15 · 키·비밀번호 값 없음</footer>
+</body>
+</html>

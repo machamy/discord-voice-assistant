@@ -137,7 +137,7 @@
     <div class="row" style="margin-bottom:14px"><button class="b" onclick="saveChains()">체인 저장</button><button class="g" onclick="resetChains()">config.toml 기본값으로</button><span></span></div>
     <div class="card"><h2>두뇌 프리셋</h2><table id="presetTbl"></table>
       <p class="dim" id="freeChain"></p>
-      <div class="row"><input id="llmQ" placeholder="시험 질문(비우면 기본 질문)" style="flex:1"><label style="width:auto"><input type="checkbox" id="llmFill" style="width:auto"> 긴 대화 기록 붙이기(캐시 확인)</label></div>
+      <div class="row"><select id="llmChar" style="width:auto"></select><input id="llmQ" placeholder="시험 질문(비우면 기본 질문)" style="flex:1"><label style="width:auto"><input type="checkbox" id="llmFill" style="width:auto"> 긴 대화 기록 붙이기(캐시 확인)</label></div>
       <div id="llmOut"></div></div>
   </section>
 
@@ -358,6 +358,7 @@ async function saveLimits() { await post('/api/limits', { daily_calls: +val('lim
 let CH = { stt: [], tts: [] };
 async function loadProv() {
   PROV = await api('/api/providers');
+  $('llmChar').innerHTML = Object.keys((typeof GD === 'object' && GD && GD.characters) || {}).map(k => `<option>${esc(k)}</option>`).join('');
   CH.stt = [...PROV.stt_chain]; CH.tts = [...PROV.tts_chain];
   renderChains();
   $('sttAdd').innerHTML = PROV.stt_known.map(x => `<option>${x}</option>`).join('');
@@ -391,7 +392,7 @@ async function llmTest(k, free) {
   if (!free && !confirmBox(`${k}는 유료예요. 한 번 불러 볼까요? (하루 한도에 잡혀요)`)) return;
   $('llmOut').innerHTML = `<p class="dim">${esc(k)} 부르는 중…</p>`;
   try {
-    const r = await post('/api/llm-test', { preset: k, question: val('llmQ'), fill: $('llmFill').checked });
+    const r = await post('/api/llm-test', { preset: k, question: val('llmQ'), fill: $('llmFill').checked, character: val('llmChar') || null });
     const t = r.tokens;
     $('llmOut').innerHTML = `<p><b class="mono">${esc(r.preset)}</b> 말 도착 ${r.speech_ms ?? '-'}ms · 전체 ${r.ms}ms · $${r.usd.toFixed(5)} · 입력 ${t.input} 출력 ${t.output} 캐시읽기 ${t.cache_read} 캐시쓰기 ${t.cache_write} · 형식 ${r.format_ok ? '<span class="ok">정상</span>' : '<span class="bad">어긋남</span>'}</p>
       <p>🔊 ${esc(r.speech)}</p><pre style="white-space:pre-wrap">${esc(r.text)}</pre>`;

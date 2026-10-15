@@ -293,8 +293,8 @@ async fn char_set(State(app): State<AppRef>, headers: HeaderMap, Path((g, key)):
             return Err(err(StatusCode::BAD_REQUEST, format!("프리셋 {p} 없음")));
         }
     }
-    if b.persona.as_ref().is_some_and(|p| p.chars().count() > 1500) {
-        return Err(err(StatusCode::BAD_REQUEST, "말투는 1500자 이내"));
+    if b.persona.as_ref().is_some_and(|p| p.chars().count() > 3000) {
+        return Err(err(StatusCode::BAD_REQUEST, "말투는 3000자 이내"));
     }
     if let Some(v) = &b.voice {
         if v.len() > crate::config::TTS_PROVIDERS.len() {
@@ -318,7 +318,9 @@ async fn char_set(State(app): State<AppRef>, headers: HeaderMap, Path((g, key)):
                 o.fallback = Some(x); // ""는 "대체 없음"
             }
             if let Some(x) = b.persona {
-                o.persona = if x.trim().is_empty() { None } else { Some(x) };
+                // 비었거나 config 기본값과 같으면 덮어쓰기로 남기지 않는다 — 기본 말투를 고치면 그대로 따라가게
+                let default = cfg.characters.get(&key).map(|c| c.persona.trim().to_string()).unwrap_or_default();
+                o.persona = if x.trim().is_empty() || x.trim() == default { None } else { Some(x) };
             }
             if let Some(x) = b.voice {
                 o.voice = Some(x);
@@ -613,6 +615,7 @@ struct LlmTestReq {
     preset: String,
     question: Option<String>,
     fill: Option<bool>,
+    character: Option<String>,
 }
 
 /// 두뇌 시험 — 프리셋 하나를 실제로 불러 지연·토큰·형식을 본다(유료면 하루 상한에 잡힘). F-35
@@ -625,7 +628,7 @@ async fn llm_test(State(app): State<AppRef>, headers: HeaderMap, Json(b): Json<L
     if q.chars().count() > 300 {
         return Err(err(StatusCode::BAD_REQUEST, "질문은 300자까지"));
     }
-    let a = crate::llm::probe(&app, &b.preset, &q, b.fill.unwrap_or(false))
+    let a = crate::llm::probe(&app, &b.preset, &q, b.fill.unwrap_or(false), b.character.as_deref())
         .await
         .map_err(|e| err(StatusCode::BAD_GATEWAY, e.to_string()))?;
     Ok(Json(json!({

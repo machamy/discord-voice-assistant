@@ -181,8 +181,11 @@ pub struct Character {
     pub brain: String,
     #[serde(default)]
     pub fallback: Option<String>,
-    /// 말투(시스템 프롬프트) — SPEC §3
+    /// 말투(시스템 프롬프트) — SPEC §3. 캐릭터 카드 구조(정체성·성격·말투·관계·내가 아는 나·예시·금지)
     pub persona: String,
+    /// 질문 바로 뒤에 붙이는 한 줄 말투 상기 — 대화가 길어져도 말투가 흐려지지 않게(캐시 지점 뒤라 비용 거의 없음)
+    #[serde(default)]
+    pub reminder: String,
     /// 공급자별 목소리 — 키는 TTS 공급자 이름
     #[serde(default)]
     pub voice: BTreeMap<String, Voice>,

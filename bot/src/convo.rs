@@ -335,7 +335,11 @@ impl Wake {
             let (Some(all), Some(hey), Some(word)) = (c.get(0), c.get(1), c.get(2)) else { continue };
             // 두 글자 뒤가 낱말 끝이거나 부르는 말('아/야/이요')일 때만 — "헤이 아마도"·"헤이 클라우드"는 이름이 아니다
             let tail = &text[word.end()..];
-            if !tail.starts_with(['아', '야', '이']) && tail.chars().next().is_some_and(char::is_alphanumeric) {
+            // '이'는 "클짱이요·클짱이야"처럼 바로 끝날 때만 — "헤이 앞장이라고"는 긴 낱말
+            // 부르는 말('아/야/이요/이야/이') 뒤도 낱말 끝이어야 — "헤이 야쩡야구"는 긴 낱말
+            let ends = |r: &str| r.chars().next().is_none_or(|c| !c.is_alphanumeric());
+            let ok_tail = ends(tail) || ["아", "야", "이요", "이야", "이"].iter().any(|p| tail.strip_prefix(p).is_some_and(ends));
+            if !ok_tail {
                 continue;
             }
             let Some(w) = jamo(word.as_str()) else { continue };
@@ -425,7 +429,7 @@ mod tests {
             assert!(w().find0(t).is_none(), "{t}");
         }
         // 부르는 자리면 걸린다
-        for t in ["에이 클짱도 그건 모르지", "헤이 아마도", "헤이 클라우드 써 봐", "오늘 아짱, 내일 보자", "그건 클짱의 의견이고"] {
+        for t in ["에이 클짱도 그건 모르지", "헤이 아마도", "헤이 클라우드 써 봐", "오늘 아짱, 내일 보자", "그건 클짱의 의견이고", "헤이 앞장이라고 했어", "헤이 야쩡야구"] {
             assert!(w().find0(t).is_none(), "{t}");
         }
         for (t, c) in [("야 클짱 오늘 뭐 해", "클짱"), ("이거 어때 클짱?", "클짱"), ("그거 말이야 아짱아 어떻게 생각해", "아짱"), ("근데 클짱 이거 알아?", "클짱"), ("헤이 아짱 해야죠", "아짱"), ("클짱은 뭐 좋아해?", "클짱"), ("아니 클짱 그게 아니라", "클짱"), ("헐 아짱 이거 봐", "아짱")] {
@@ -455,7 +459,7 @@ mod tests {
     fn hey_fuzzy_real_transcripts() {
         // 2026-10-15 실제 받아쓰기에서 "헤이 클짱/아짱"이 이렇게 적혔다
         let wk = w();
-        for (t, c) in [("뭐야 에이클잖아닌거", "클짱"), ("해이클잖이요", "클짱"), ("헤이 클짝", "클짱"), ("헤이 야쩡", "아짱"), ("헤이 야정", "아짱"), ("헤이 앞장", "아짱"), ("에이, 클짱.", "클짱")] {
+        for (t, c) in [("뭐야 에이클잖아 뭐해", "클짱"), ("해이클잖이요", "클짱"), ("헤이 클짝", "클짱"), ("헤이 야쩡", "아짱"), ("헤이 야정", "아짱"), ("헤이 앞장", "아짱"), ("에이, 클짱.", "클짱")] {
             for hey_only in [false, true] {
                 let h = wk.find(t, hey_only).unwrap_or_else(|| panic!("{t} hey_only={hey_only}"));
                 assert_eq!(h.character, c, "{t}");

@@ -112,6 +112,7 @@ EXACT_HALLUCINATIONS = {"수고하셨습니다", "안녕히계세요", "안녕�
 # 한국어로 고정했는데 키릴·가나·한자만 나오면 환각(실사용: "Редактор субтитров А.Семкин")
 _FOREIGN = re.compile(r"[Ѐ-ӿ぀-ヿ一-鿿]")
 _HANGUL = re.compile(r"[가-힣]")
+_KANA_CYR = re.compile(r"[Ѐ-ӿ぀-ヿ]")
 _ONLY_PUNCT = re.compile(r"^[\s\W_]*$")
 
 
@@ -126,6 +127,9 @@ def _err_kind(e: BaseException) -> str:
 def is_hallucination(text: str, no_speech: float, logprob: float, audio_s: float = 99.0) -> bool:
     t = text.strip()
     if not t or _ONLY_PUNCT.match(t):
+        return True
+    # 가나·키릴은 한국어 받아쓰기에서 정상으로 나올 일이 없다 — 한글이 섞여 있어도 환각("9단クッポー", "고로 고로 返す")
+    if _KANA_CYR.search(t):
         return True
     if not _HANGUL.search(t):
         # 한글이 하나도 없는데 외국 문자가 섞였거나, 2초 미만 짧은 소리가 영어 한 줄로 나오면 버린다("hey y'all ciao!")
