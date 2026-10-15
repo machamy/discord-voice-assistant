@@ -1,0 +1,20 @@
+# 아짱·클짱 사이드카. 보조 PC 전용 venv에만 설치한다.
+# STT — PoC 2와 같은 조합(ctranslate2 4.8.x = CUDA 12.8 빌드. CUDA 13은 GTX 1060 미지원)
+faster-whisper==1.2.1
+# av 19는 faster-whisper 1.2.1의 open(metadata_errors=...)과 비호환
+av==15.1.0
+ctranslate2==4.8.2
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
+# 서버
+fastapi
+uvicorn
+httpx
+# TTS (무료 기본)
+edge-tts
+# melotts(오프라인 대체)는 별도 venv(Python 3.11) — 3.13에선 tokenizers·fugashi·mecab 빌드 실패(2026-10-13 실측):
+#   py -3.11 -m venv melo-venv
+#   melo-venv\Scripts\python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch
+#   melo-venv\Scripts\python -m pip install git+https://github.com/myshell-ai/MeloTTS.git "setuptools<81"
+#   melo-venv\Scripts\python -m unidic download
+#   melo-venv\Scripts\python -m pip install --target melo-venv\mecabko python-mecab-ko   # site-packages에 넣지 말 것(MeCab 폴더와 충돌)

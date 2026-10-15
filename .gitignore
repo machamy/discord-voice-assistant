@@ -1,0 +1,102 @@
+# 비밀정보 / 실제 연결 설정 — 절대 커밋 금지
+config/*.local.json
+config/*.local.*
+.env
+.env.*
+*.secret
+# Cloudflare 터널 자격증명 (H2)
+credentials.json
+**/credentials.json
+# 암호화 키 / 세션 / 쿠키 (novelpia 등)
+*.fernet_key
+.fernet_key
+session.enc
+*.enc
+cookies.json
+# sync-web.mjs가 config/manga-access-token.local.json에서 생성하는 평문 CF Access 토큰
+**/js/native/cf-token.js
+# PoC 덤프(실 세션 쿠키 포함 가능)
+_poc/
+# 이미지 tar
+*.tar
+
+# 인증 세션/토큰
+*.sid
+*_token.txt
+
+# 파이썬
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 노드
+node_modules/
+
+# 러스트 빌드 산출물 (manga-server 2.6G, tauri/src-tauri 2.5G)
+target/
+**/target/
+
+# Tauri / Capacitor 생성물
+**/src-tauri/gen/
+**/app/android/build/
+**/app/android/.gradle/
+**/app/android/app/build/
+**/app/android/capacitor-cordova-android-plugins/
+**/app/android/local.properties
+
+# Gradle (novelpia-android-app)
+.gradle/
+**/build/
+!**/src/**/build/
+
+# 에이전트 작업 공간 / 임시 산출물
+.tmp/
+.agents/
+.isolated/
+.worktrees/
+.playwright-mcp/
+
+# 테스트 아티팩트
+uitest/shots/
+**/uitest/shots/
+**/test-results/
+**/playwright-report/
+
+# 저장된 웹페이지 리소스 덤프 (novelpia-archiver/ref, 36M)
+**/ref/*_files/
+
+# 생성 데이터 / 결과물
+**/data/raw/
+**/data/corpus/
+*.sqlite
+*.sqlite3
+*.db
+**/output/epub/
+
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+
+
+# 음성 PoC — 녹음·데이터셋·모델 캐시·측정 결과는 커밋하지 않는다(녹음은 개인 음성)
+poc/**/data/
+poc/**/record/
+poc/**/out/
+poc/**/hf/
+*.wav
+*.flac
+*.ogg
+*.opus
+*.mp3
+*.m4a
+
+# 봇 실행 산출물 — 상태·로그(대화 내용은 원래 저장 안 함)
+bot/data/
+data/
+*.log
+bot/config.toml
+.claude/

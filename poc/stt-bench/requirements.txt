@@ -1,0 +1,10 @@
+# PoC 2 측정용. 보조 PC의 전용 venv에만 설치한다(시스템 Python·PATH·드라이버는 건드리지 않는다).
+# ctranslate2 4.8.x Windows 휠 = CUDA 12.8 + cuDNN 9 빌드. CUDA 13 계열은 Pascal(GTX 1060)을 빼서 쓰면 안 된다.
+faster-whisper==1.2.1
+# av 19는 faster-whisper 1.2.1이 넘기는 open(metadata_errors=...) 인자를 없애서 디코드가 TypeError로 죽는다(2026-10-12 실측)
+av==15.1.0
+ctranslate2==4.8.2
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*
+pyarrow
+huggingface_hub

@@ -1,0 +1,34 @@
+[package]
+name = "voicebot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "아짱·클짱 — 디스코드 음성 채널에서 대화를 듣고 호출어에 음성으로 대답하는 봇"
+
+# serenity·songbird 버전은 musicbot-mk2·PoC 1과 맞춘다(DAVE 수신 검증된 조합)
+[dependencies]
+serenity = { version = "0.12.5", default-features = false, features = ["client", "gateway", "rustls_backend", "model", "cache", "voice"] }
+songbird = { version = "0.6.0", features = ["receive"] }
+# songbird는 symphonia를 default-features=false로 가져와 WAV/PCM 디코더가 빠진다 — 사이드카 TTS가 WAV를 준다
+symphonia = { version = "0.5.2", default-features = false, features = ["wav", "pcm"] }
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "signal", "time", "sync", "process", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+axum = { version = "0.8", features = ["json", "query"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+regex = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+anyhow = "1"
+getrandom = "0.2"
+sha2 = "0.10"
+
+[profile.release]
+opt-level = 3
+
+[target.'cfg(windows)'.dependencies]
+# 봇 표준출력 핸들을 상속 불가로 — 사이드카가 봇 로그 파일을 물고 있으면 재시작 때 로그를 못 연다
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console"] }

@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 클짱: 클로드 모에화. 테라코타 머리 + 크림색 별빛(스파크) 머리핀 -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="70%">
+      <stop offset="0" stop-color="#FFF6EC"/>
+      <stop offset="1" stop-color="#F3DCC8"/>
+    </radialGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E8896A"/>
+      <stop offset="1" stop-color="#C4613F"/>
+    </linearGradient>
+    <linearGradient id="iris" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4A2418"/>
+      <stop offset="0.55" stop-color="#9C4A2E"/>
+      <stop offset="1" stop-color="#F0A070"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- 배경 반짝이 -->
+  <g fill="#E8A27F" opacity="0.45">
+    <path d="M70 110 l6 16 16 6 -16 6 -6 16 -6 -16 -16 -6 16 -6z"/>
+    <path d="M440 150 l5 12 12 5 -12 5 -5 12 -5 -12 -12 -5 12 -5z"/>
+    <path d="M430 390 l4 10 10 4 -10 4 -4 10 -4 -10 -10 -4 10 -4z"/>
+  </g>
+
+  <!-- 뒷머리 -->
+  <path d="M120 250 C110 140 180 70 256 70 C332 70 402 140 392 250 C400 330 410 420 430 512 L82 512 C102 420 112 330 120 250 Z" fill="url(#hair)"/>
+
+  <!-- 어깨·옷 -->
+  <path d="M120 512 C130 450 180 420 256 420 C332 420 382 450 392 512 Z" fill="#F7EFE6"/>
+  <path d="M200 428 L256 476 L312 428 C295 422 276 420 256 420 C236 420 217 422 200 428 Z" fill="#D97757"/>
+  <path d="M232 448 L256 470 L280 448 L256 500 Z" fill="#B85A3B"/>
+  <!-- 목 -->
+  <path d="M226 380 L226 425 C240 440 272 440 286 425 L286 380 Z" fill="#F7CDB8"/>
+
+  <!-- 얼굴 -->
+  <ellipse cx="256" cy="285" rx="128" ry="122" fill="#FFE6D8"/>
+
+  <!-- 옆머리 -->
+  <path d="M132 220 C118 290 124 360 150 420 C160 380 166 320 170 260 Z" fill="url(#hair)"/>
+  <path d="M380 220 C394 290 388 360 362 420 C352 380 346 320 342 260 Z" fill="url(#hair)"/>
+
+  <!-- 앞머리 -->
+  <path d="M128 244 C130 150 190 100 256 100 C322 100 382 150 384 244
+           C372 226 364 214 352 206 C350 224 348 238 344 252
+           C334 228 322 210 306 200 C304 218 300 232 292 246
+           C282 222 270 204 256 194 C246 210 240 228 236 244
+           C228 224 218 208 206 200 C196 214 190 232 186 252
+           C178 232 170 218 160 208 C150 220 140 232 128 244 Z" fill="url(#hair)"/>
+  <!-- 머리 하이라이트 -->
+  <path d="M190 140 C215 125 245 120 270 124" stroke="#FFC4A8" stroke-width="7" fill="none" stroke-linecap="round" opacity="0.8"/>
+  <!-- 바보털 -->
+  <path d="M256 102 C250 70 270 50 292 52 C276 60 268 78 266 102 Z" fill="#D97757"/>
+
+  <!-- 별빛 머리핀 (클로드 스파크 느낌의 8갈래 별) -->
+  <g transform="translate(346 168) rotate(12)">
+    <path d="M0 -30 L6 -8 L28 -12 L10 2 L22 24 L2 12 L-8 30 L-8 8 L-30 4 L-10 -6 L-22 -24 L-2 -12 Z" fill="#FFF3E2" stroke="#B85A3B" stroke-width="3" stroke-linejoin="round"/>
+    <circle r="6" fill="#D97757"/>
+  </g>
+
+  <!-- 눈썹 -->
+  <path d="M178 238 Q204 228 228 236" stroke="#9C4A2E" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M284 236 Q308 228 334 238" stroke="#9C4A2E" stroke-width="5" fill="none" stroke-linecap="round"/>
+
+  <!-- 왼눈 -->
+  <g>
+    <ellipse cx="204" cy="290" rx="30" ry="38" fill="#FFFFFF"/>
+    <ellipse cx="204" cy="294" rx="25" ry="33" fill="url(#iris)"/>
+    <ellipse cx="204" cy="296" rx="11" ry="15" fill="#2A120B"/>
+    <circle cx="194" cy="280" r="9" fill="#FFFFFF"/>
+    <circle cx="214" cy="310" r="4" fill="#FFFFFF" opacity="0.9"/>
+    <path d="M170 270 Q204 238 238 268" stroke="#2A120B" stroke-width="7" fill="none" stroke-linecap="round"/>
+    <path d="M170 270 L162 262" stroke="#2A120B" stroke-width="5" stroke-linecap="round"/>
+  </g>
+  <!-- 오른눈 -->
+  <g>
+    <ellipse cx="308" cy="290" rx="30" ry="38" fill="#FFFFFF"/>
+    <ellipse cx="308" cy="294" rx="25" ry="33" fill="url(#iris)"/>
+    <ellipse cx="308" cy="296" rx="11" ry="15" fill="#2A120B"/>
+    <circle cx="298" cy="280" r="9" fill="#FFFFFF"/>
+    <circle cx="318" cy="310" r="4" fill="#FFFFFF" opacity="0.9"/>
+    <path d="M274 268 Q308 238 342 270" stroke="#2A120B" stroke-width="7" fill="none" stroke-linecap="round"/>
+    <path d="M342 270 L350 262" stroke="#2A120B" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <!-- 볼터치 -->
+  <ellipse cx="170" cy="340" rx="22" ry="11" fill="#FF8F7A" opacity="0.45"/>
+  <ellipse cx="342" cy="340" rx="22" ry="11" fill="#FF8F7A" opacity="0.45"/>
+  <g stroke="#FF8F7A" stroke-width="3" stroke-linecap="round" opacity="0.7">
+    <path d="M160 338 l6 -6"/><path d="M170 338 l6 -6"/><path d="M180 338 l6 -6"/>
+    <path d="M332 338 l6 -6"/><path d="M342 338 l6 -6"/><path d="M352 338 l6 -6"/>
+  </g>
+
+  <!-- 입 (ω) -->
+  <path d="M238 352 Q247 364 256 354 Q265 364 274 352" stroke="#8A3A26" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

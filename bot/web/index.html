@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>아짱·클짱 콘솔</title>
+<style>
+  :root { --bg:#1e1f22; --panel:#2b2d31; --line:#3a3c42; --text:#e6e6e6; --dim:#a0a3aa; --accent:#d97757; --mint:#5fc9b5; --bad:#e5534b; --ok:#57ab5a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 system-ui, "Malgun Gothic", sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:12px; padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:2; }
+  header h1 { font-size:16px; margin:0; } header .sp { flex:1; }
+  nav { display:flex; gap:4px; flex-wrap:wrap; padding:8px 16px; border-bottom:1px solid var(--line); }
+  nav button { background:none; border:1px solid transparent; color:var(--dim); padding:6px 12px; border-radius:6px; cursor:pointer; font:inherit; }
+  nav button.on { color:var(--text); border-color:var(--line); background:var(--panel); }
+  main { padding:16px; max-width:1100px; margin:0 auto; }
+  section { display:none; } section.on { display:block; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px; }
+  label { display:block; color:var(--dim); font-size:12px; margin:8px 0 3px; }
+  input, select, textarea { width:100%; background:#1b1c1f; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 9px; font:inherit; }
+  textarea { min-height:120px; resize:vertical; }
+  button.b { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:7px 14px; cursor:pointer; font:inherit; }
+  button.g { background:#3a3c42; color:var(--text); border:0; border-radius:6px; padding:7px 12px; cursor:pointer; font:inherit; }
+  button.r { background:var(--bad); color:#fff; border:0; border-radius:6px; padding:7px 12px; cursor:pointer; font:inherit; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; } .row > * { flex:1; } .row > button { flex:0 0 auto; }
+  table { width:100%; border-collapse:collapse; } td, th { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:top; } th { color:var(--dim); font-weight:500; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; background:#3a3c42; margin:1px 2px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .dim { color:var(--dim); } .warn { color:#d9a441; } .mono { font-family:Consolas, monospace; }
+  .chips span { display:inline-flex; align-items:center; gap:6px; background:#3a3c42; padding:2px 4px 2px 10px; border-radius:99px; margin:3px; }
+  .chips button { background:none; border:0; color:var(--dim); cursor:pointer; font-size:14px; }
+  #toast { position:fixed; right:16px; bottom:16px; background:var(--panel); border:1px solid var(--line); padding:10px 14px; border-radius:8px; display:none; }
+  #login { max-width:340px; margin:12vh auto; }
+  .line { padding:3px 0; border-bottom:1px dashed var(--line); } .line .t { color:var(--dim); font-size:12px; margin-right:6px; }
+  .char0 { color:var(--accent); }
+  .chain li { list-style:none; display:flex; gap:6px; align-items:center; padding:3px 0; } .chain { padding:0; margin:0; }
+</style>
+</head>
+<body>
+<div id="login" class="card" style="display:none">
+  <h2>🎙️ 아짱·클짱 콘솔</h2>
+  <label>비밀번호</label><input id="pw" type="password" autocomplete="current-password">
+  <div style="margin-top:12px"><button class="b" onclick="login()">로그인</button></div>
+  <p id="loginErr" class="bad"></p>
+</div>
+
+<div id="appView" style="display:none">
+<header>
+  <h1>🎙️ 아짱·클짱</h1>
+  <select id="guild" style="max-width:260px" onchange="selectGuild()"></select>
+  <span class="sp"></span>
+  <span id="hdrState" class="dim"></span>
+  <button class="g" onclick="logout()">로그아웃</button>
+</header>
+<nav id="tabs">
+  <button data-t="status" class="on">상태</button>
+  <button data-t="chars">캐릭터</button>
+  <button data-t="server">서버·무시</button>
+  <button data-t="usage">사용량</button>
+  <button data-t="prov">공급자</button>
+  <button data-t="convo">대화</button>
+  <button data-t="ops">조작</button>
+</nav>
+<main>
+  <section id="t-status" class="on">
+    <div class="grid">
+      <div class="card"><h2>음성</h2><div id="stVoice"></div></div>
+      <div class="card"><h2>받아쓰기 사이드카</h2><div id="stSide"></div></div>
+      <div class="card"><h2>최근 사용 공급자</h2><div id="stLast"></div></div>
+    </div>
+  </section>
+
+  <section id="t-chars"><div class="grid" id="charCards"></div></section>
+
+  <section id="t-server">
+    <div class="grid">
+      <div class="card"><h2>이 서버</h2>
+        <label>긴 답을 올릴 텍스트 채널</label><select id="textCh"></select>
+        <label>주인이 음성 채널에 없으면</label>
+        <select id="reqOwner"><option value="true">듣지 않음 (권장)</option><option value="false">그래도 들음</option></select>
+        <label>부르는 방식</label>
+        <select id="heyOnly"><option value="false">이름 — "클짱"·"헤이 클짱" 둘 다</option><option value="true">헤이만 — "헤이 클짱"만 (이름만 부르면 무시)</option></select>
+        <label>음성 대답</label>
+        <select id="voiceReply"><option value="true">켬 — 말하고 글도 올림</option><option value="false">끔 — 글로만 대답</option></select>
+        <label>들어올 때 음성 인사</label>
+        <select id="greetOn"><option value="true">켬</option><option value="false">끔 (채팅 녹음 고지는 그대로)</option></select>
+        <input id="greet" maxlength="200" placeholder="비우면 기본 인사">
+        <label>대답 음량(%, 0~200, 기본 100)</label><input id="volume" type="number" min="0" max="200" step="5">
+        <label>대화 기억 시간(분, 1~120)</label><input id="bufMin" type="number" min="1" max="120">
+        <div style="margin-top:12px"><button class="b" onclick="saveGuild()">저장</button></div>
+      </div>
+      <div class="card"><h2>무시 — 유저</h2>
+        <div class="chips" id="igUsers"></div>
+        <label>이름으로 찾기</label>
+        <div class="row"><input id="memQ" placeholder="닉네임 일부"><button class="g" onclick="searchMembers()">찾기</button></div>
+        <div id="memRes"></div>
+        <label>또는 유저 ID</label>
+        <div class="row"><input id="igUserId" placeholder="123456789012345678"><button class="g" onclick="ignore('user', val('igUserId'), true)">추가</button></div>
+      </div>
+      <div class="card"><h2>무시 — 역할</h2>
+        <div class="chips" id="igRoles"></div>
+        <label>역할 고르기</label>
+        <div class="row"><select id="roleSel"></select><button class="g" onclick="ignore('role', val('roleSel'), true)">추가</button></div>
+        <h2 style="margin-top:16px">스스로 거부 (/무시해줘)</h2>
+        <div class="chips" id="igSelf"></div>
+        <p class="dim">봇(음악봇 포함)은 자동으로 듣지 않아요.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="t-usage">
+    <div class="grid">
+      <div class="card"><h2>오늘·이번 달</h2><div id="usSum"></div></div>
+      <div class="card"><h2>하루 유료 한도</h2>
+        <label>하루 유료 호출 수</label><input id="limCalls" type="number" min="0">
+        <label>하루 유료 금액(USD)</label><input id="limUsd" type="number" min="0" step="0.1">
+        <div style="margin-top:12px"><button class="b" onclick="saveLimits()">저장</button></div>
+        <p class="dim">한도에 닿으면 캐릭터의 대체 두뇌(무료)로 내려가요.</p>
+      </div>
+    </div>
+    <div class="card"><h2>날짜별</h2><table id="usDays"></table></div>
+  </section>
+
+  <section id="t-prov">
+    <div class="grid">
+      <div class="card"><h2>받아쓰기 체인</h2><ul class="chain" id="sttChain"></ul>
+        <div class="row" style="margin-top:6px"><select id="sttAdd"></select><button class="g" onclick="chainAdd('stt')">추가</button></div>
+        <label style="margin-top:12px">받아쓰기 힌트 (로컬 whisper hotwords)</label>
+        <div class="row"><select id="hintOn"><option value="false">끔</option><option value="true">켬</option></select><input id="hintWords" maxlength="100"><input id="hintMin" type="number" min="0" max="10000" step="100" title="이 길이(ms) 이상 발화에만"></div>
+        <div class="dim" style="font-size:12px">힌트를 주면 그 말로 더 잘 받아쓰지만, 짧은 소리에서 힌트 말을 지어내 엉뚱하게 부를 수 있어요. 오른쪽 숫자(ms) 이상 발화에만 써요.</div>
+        <div style="margin-top:6px"><button class="b" onclick="saveHint()">힌트 저장</button></div></div>
+      <div class="card"><h2>목소리 체인</h2><ul class="chain" id="ttsChain"></ul>
+        <div class="row" style="margin-top:6px"><select id="ttsAdd"></select><button class="g" onclick="chainAdd('tts')">추가</button></div></div>
+      <div class="card"><h2>키 등록 여부</h2><div id="keys"></div><p class="dim">키 값은 화면에 나오지 않아요. 바꾸려면 보조 PC의 <span class="mono">.env</span>를 고친 뒤 재시작.</p></div>
+    </div>
+    <div class="row" style="margin-bottom:14px"><button class="b" onclick="saveChains()">체인 저장</button><button class="g" onclick="resetChains()">config.toml 기본값으로</button><span></span></div>
+    <div class="card"><h2>두뇌 프리셋</h2><table id="presetTbl"></table>
+      <p class="dim" id="freeChain"></p>
+      <div class="row"><input id="llmQ" placeholder="시험 질문(비우면 기본 질문)" style="flex:1"><label style="width:auto"><input type="checkbox" id="llmFill" style="width:auto"> 긴 대화 기록 붙이기(캐시 확인)</label></div>
+      <div id="llmOut"></div></div>
+  </section>
+
+  <section id="t-convo">
+    <div class="card"><h2>받아쓰기 상황 <span class="dim">(발화마다 결과 · 글 내용은 아래 대화에만)</span></h2>
+      <div class="row" style="margin-bottom:8px"><label style="margin:0"><input type="checkbox" id="bufAuto" checked onchange="autoBuf()"> 2초마다 자동 새로고침</label><span></span><span></span></div>
+      <div id="sttHead"></div>
+      <div style="max-height:320px;overflow:auto"><table id="sttLog"></table></div></div>
+    <div class="card"><h2>장기 기억 <span class="dim">(누가 "기억해"라고 부탁한 것 · 서버별 최대 50개 · 저장됨)</span></h2>
+      <div id="mems"></div>
+      <div class="row" style="margin-top:8px"><input id="memAdd" placeholder="직접 넣기 — 예: 마참은 민트초코를 싫어함" maxlength="150"><button class="g" onclick="memAdd()">추가</button><button class="r" onclick="memClear()">전부 지우기</button></div></div>
+    <div class="card"><h2>두뇌 입출력 원문 <span class="dim">(최근 20건 · 메모리에만 · 대화와 같이 지워짐)</span></h2>
+      <div class="row" style="margin-bottom:8px"><button class="g" onclick="loadTraces()">새로고침</button><span></span><span></span></div>
+      <div id="traces"></div></div>
+    <div class="card"><h2>지금 기억 중인 대화 <span class="dim">(메모리에만 있음 · 저장 안 됨)</span></h2>
+      <div class="row" style="margin-bottom:8px"><button class="g" onclick="loadBuffer()">새로고침</button><button class="r" onclick="forget()">전부 지우기</button><span></span></div>
+      <div id="buf"></div></div>
+  </section>
+
+  <section id="t-ops">
+    <div class="grid">
+      <div class="card"><h2>음성 채널</h2>
+        <label>들어갈 채널</label><select id="voiceCh"></select>
+        <div class="row" style="margin-top:10px"><button class="b" onclick="joinCh()">들어가기</button><button class="g" onclick="leaveCh()">나가기</button><span></span></div></div>
+      <div class="card"><h2>봇</h2>
+        <div class="row"><button class="g" onclick="post('/api/reload').then(()=>toast('config.toml 다시 읽음'))">설정 다시 읽기</button>
+        <button class="r" onclick="if(confirmBox('봇을 재시작할까요?')) post('/api/restart').then(()=>toast('재시작 중… 10초 뒤 새로고침'))">재시작</button><span></span></div></div>
+    </div>
+  </section>
+</main>
+</div>
+<div id="toast"></div>
+
+<script>
+let S = null, G = null, GD = null, PROV = null, VOICES = [];
+const $ = id => document.getElementById(id);
+const val = id => $(id).value;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// 인라인 핸들러 인자: JS 문자열 리터럴로 만든 뒤 HTML 속성용으로 이스케이프
+const jsq = s => esc(JSON.stringify(String(s ?? '')));
+let CK = [];  // 캐릭터 키 — 화면 id에는 순번만 쓴다
+function toast(m, bad) { const t = $('toast'); t.textContent = m; t.style.display = 'block'; t.style.borderColor = bad ? 'var(--bad)' : 'var(--line)'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 3000); }
+function confirmBox(m) { return window.confirm(m); }
+async function api(path, opt = {}, quiet = false) {
+  const r = await fetch(path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...opt });
+  if (r.status === 401) { showLogin(); throw new Error('로그인 필요'); }
+  if (!r.ok) { const t = await r.text(); if (!quiet) toast(t || r.statusText, true); throw new Error(t); }
+  const ct = r.headers.get('content-type') || '';
+  return ct.includes('json') ? r.json() : r;
+}
+const post = (p, b) => api(p, { method: 'POST', body: JSON.stringify(b || {}) });
+
+function showLogin() { $('login').style.display = 'block'; $('appView').style.display = 'none'; }
+async function login() {
+  $('loginErr').textContent = '';
+  const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: val('pw') }) });
+  if (!r.ok) { $('loginErr').textContent = await r.text(); return; }
+  $('login').style.display = 'none'; boot();
+}
+$('pw').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+async function logout() { await post('/api/logout'); showLogin(); }
+
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === 't-' + b.dataset.t));
+  ({ usage: loadUsage, prov: loadProv, convo: () => { loadBuffer(); loadMems(); loadTraces(); } })[b.dataset.t]?.();
+});
+
+async function boot() {
+  try { S = await api('/api/status'); } catch { return; }
+  $('appView').style.display = 'block';
+  const sel = $('guild'); const prev = G;
+  sel.innerHTML = S.guilds.map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  G = prev && S.guilds.some(g => g.id === prev) ? prev : (S.sessions[0]?.guild || S.guilds[0]?.id);
+  sel.value = G;
+  renderStatus();
+  await selectGuild();
+  setInterval(refreshStatus, 5000);
+  autoBuf();
+}
+async function refreshStatus() { try { S = await api('/api/status'); renderStatus(); } catch {} }
+const guildObj = () => S.guilds.find(g => g.id === G) || { voice_channels: [], text_channels: [], roles: [] };
+
+function renderStatus() {
+  const s = S.sessions.find(x => x.guild === G);
+  const gname = guildObj().name || '';
+  $('hdrState').innerHTML = s ? (s.listening ? '<span class="ok">● 듣는 중</span>' : '<span class="dim">⏸ 주인 기다림</span>') : '<span class="dim">대기</span>';
+  if (s) {
+    const ch = guildObj().voice_channels.find(c => c.id === s.channel)?.name || s.channel;
+    const st = s.stats;
+    $('stVoice').innerHTML = `<b>${esc(gname)}</b> · 🔊 ${esc(ch)} · ${esc(s.minutes)}분째 · ${s.listening ? '<span class="ok">듣는 중</span>' : '<span class="dim">멈춤(주인 없음)</span>'}
+      <p>${s.users.map(u => `<span class="pill">${esc(u.name || u.id)}${u.excluded ? ` 🚫${esc(u.excluded)}` : ''}</span>`).join('') || '<span class="dim">아직 말한 사람 없음</span>'}</p>
+      <table><tr><th>발화</th><td>${esc(st.utterances)}</td><th>잡음 버림</th><td>${esc(st.dropped_noise)}</td></tr>
+      <tr><th>환각 거름</th><td>${esc(st.stt_filtered)}</td><th>받아쓰기 실패</th><td>${esc(st.stt_failed)}</td></tr>
+      <tr><th>호출</th><td>${esc(st.wakes)}</td><th>대답 / 실패</th><td>${esc(st.answers)} / ${esc(st.answer_failed)}</td></tr>
+      <tr><th>기억 중</th><td>${esc(s.buffer_lines)}줄</td><th></th><td></td></tr></table>`;
+  } else $('stVoice').innerHTML = '<span class="dim">음성 채널에 없어요. 디스코드에서 /들어와 또는 조작 탭.</span>';
+  const sc = S.sidecar, gpu = sc.detail?.gpu, L = S.latency;
+  // 사이드카가 준 값은 숫자로 바꾸거나 이스케이프해서 넣는다(변조된 사이드카 대비)
+  const n = v => esc(Number.isFinite(Number(v)) ? Number(v) : '?');
+  const loaded = Array.isArray(sc.detail?.stt?.loaded) ? sc.detail.stt.loaded : [];
+  $('stSide').innerHTML = `${sc.ok ? '<span class="ok">정상</span>' : '<span class="bad">응답 없음</span>'} · 재시작 ${n(sc.restarts)}회
+    <br>GPU ${gpu ? `${n(gpu.used_mib)} / ${n(gpu.total_mib)} MiB · ${n(gpu.util_pct)}%` : '-'}
+    <br>로드된 모델 ${esc(loaded.map(String).join(', ') || '-')}
+    ${sc.detail?.stt?.cuda_cooldown_s ? `<br><span class="bad">GPU 쉬는 중 ${n(sc.detail.stt.cuda_cooldown_s)}초 (CPU로 받아씀)</span>` : ''}
+    ${sc.last_error && !sc.ok ? `<br><span class="bad">${esc(sc.last_error)}</span>` : ''}
+    <br>응답 지연(말 끝→첫 소리) ${L.p50_ms ? `p50 ${esc((Number(L.p50_ms)/1000).toFixed(1))}초 · p95 ${esc((Number(L.p95_ms)/1000).toFixed(1))}초 (n=${n(L.n)})` : '아직 없음'}
+    <br><span class="dim">봇 가동 ${n(S.uptime_min)}분</span>`;
+  $('stLast').innerHTML = `받아쓰기 <span class="mono">${esc(S.last_used.stt || '-')}</span><br>두뇌 <span class="mono">${esc(S.last_used.llm || '-')}</span><br>목소리 <span class="mono">${esc(S.last_used.tts || '-')}</span>`;
+}
+
+async function selectGuild() {
+  G = val('guild');
+  renderStatus();
+  GD = await api(`/api/guild/${G}`);
+  if (!VOICES.length) { try { VOICES = (await api('/api/voices')).voices.map(v => v.name); } catch {} }
+  renderChars(); renderServer(); renderOps();
+}
+
+function presetOpts(cur, withNone) {
+  return (withNone ? `<option value="">없음</option>` : '') + Object.entries(GD.presets).map(([k, p]) =>
+    `<option value="${esc(k)}" ${k === cur ? 'selected' : ''}>${esc(k)} — ${esc(p.model)} (${p.free ? '무료' : '유료'}${p.owner_only ? '·주인' : ''}${p.has_key ? '' : '·키 없음'}${p.trains_on_input ? '·⚠️학습' : ''})</option>`).join('');
+}
+function renderChars() {
+  CK = Object.keys(GD.characters);
+  $('charCards').innerHTML = CK.map((k, i) => {
+    const c = GD.characters[k];
+    const v = c.voice['edge-tts'] || { voice: '', rate: '+0%', pitch: '+0Hz' };
+    return `<div class="card"><h2>${esc(c.emoji)} ${esc(c.name)}</h2>
+      <label>두뇌</label><select id="br-${i}">${presetOpts(c.brain)}</select>
+      <label>대체 두뇌 (한도·실패 때)</label><select id="fb-${i}">${presetOpts(c.fallback || '', true)}</select>
+      <label>목소리 (edge-tts · azure-tts 공통)</label>
+      <select id="vo-${i}">${(VOICES.length ? VOICES : [v.voice]).map(n => `<option ${n === v.voice ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <div class="row"><div><label>속도</label><input id="ra-${i}" value="${esc(v.rate)}"></div><div><label>높낮이</label><input id="pi-${i}" value="${esc(v.pitch)}"></div></div>
+      <label>말투 (시스템 프롬프트)</label><textarea id="pe-${i}">${esc(c.persona)}</textarea>
+      <label>호출어 (기본, config.toml)</label><div class="dim">${c.wake.map(esc).join(', ')}</div>
+      <label>호출어 사전 — 받아쓰기가 이름을 이렇게 적으면 호출로 봐요 (쉼표로 구분, 모든 서버 공통)</label>
+      <div class="row"><input id="wx-${i}" value="${esc((GD.wake_extra?.[k] || []).join(', '))}" placeholder="예: 클잖, 야쩡"><button class="g" onclick="saveWake(${i})">사전 저장</button></div>
+      <div class="dim" style="font-size:12px">"헤이 ○○"처럼 헤이 바로 뒤에 오는 말은 이름과 비슷하기만 해도 호출로 봐요(받아쓰기 상황에서 확인).</div>
+      <div class="row" style="margin-top:12px"><button class="b" onclick="saveChar(${i})">저장</button><button class="g" onclick="preview(${i})">▶ 미리 듣기</button><button class="g" onclick="resetChar(${i})">기본값</button><span></span></div>
+    </div>`;
+  }).join('');
+}
+function voicePatch(i) {
+  const c = GD.characters[CK[i]]; const voice = { ...c.voice };
+  const nv = { voice: val('vo-' + i), rate: val('ra-' + i) || '+0%', pitch: val('pi-' + i) || '+0Hz' };
+  voice['edge-tts'] = nv; voice['azure-tts'] = nv; return voice;
+}
+async function saveChar(i) {
+  const k = CK[i];
+  await post(`/api/guild/${G}/character/${encodeURIComponent(k)}`, { brain: val('br-' + i), fallback: val('fb-' + i), persona: val('pe-' + i), voice: voicePatch(i) });
+  toast(`${k} 저장됨`); GD = await api(`/api/guild/${G}`);
+}
+async function saveWake(i) {
+  const k = CK[i];
+  const words = val('wx-' + i).split(/[,，\s]+/).map(s => s.trim()).filter(Boolean);
+  const r = await post('/api/wake', { character: k, words });
+  toast(`${k} 호출어 사전 저장 (${r.words.length}개)`); GD = await api(`/api/guild/${G}`); renderChars();
+}
+async function resetChar(i) { const k = CK[i]; if (!confirmBox(`${k} 설정을 config.toml 기본값으로 돌릴까요?`)) return; await post(`/api/guild/${G}/character/${encodeURIComponent(k)}`, { reset: true }); GD = await api(`/api/guild/${G}`); renderChars(); toast('기본값으로'); }
+async function preview(i) {
+  const k = CK[i];
+  await saveChar(i);
+  const r = await api('/api/tts-preview', { method: 'POST', body: JSON.stringify({ character: k, guild: G }) });
+  const blob = await r.blob(); new Audio(URL.createObjectURL(blob)).play();
+  toast(`미리 듣기 (${r.headers.get('x-provider')})`);
+}
+
+function nameOf(id) { return GD.names?.[id] || id; }
+function renderServer() {
+  const g = guildObj();
+  $('textCh').innerHTML = `<option value="">미지정 (/들어와 친 채널)</option>` + g.text_channels.map(c => `<option value="${c.id}" ${c.id === GD.text_channel ? 'selected' : ''}># ${esc(c.name)}</option>`).join('');
+  $('reqOwner').value = String(GD.require_owner_present);
+  $('bufMin').value = GD.buffer_minutes;
+  $('heyOnly').value = String(GD.hey_only);
+  $('voiceReply').value = String(GD.voice_reply);
+  $('greetOn').value = String(GD.greeting_on);
+  $('greet').value = GD.greeting; $('greet').placeholder = '비우면 기본: ' + GD.greeting_default;
+  $('volume').value = GD.volume;
+  const chip = (kind, id, label) => `<span>${esc(label)}<button title="해제" onclick="ignore(${jsq(kind)},${jsq(id)},false)">✕</button></span>`;
+  $('igUsers').innerHTML = GD.ignore_users.map(u => chip('user', u, nameOf(u))).join('') || '<span class="dim">없음</span>';
+  const roleName = id => g.roles.find(r => r.id === id)?.name || id;
+  $('igRoles').innerHTML = GD.ignore_roles.map(r => chip('role', r, '@' + roleName(r))).join('') || '<span class="dim">없음</span>';
+  $('igSelf').innerHTML = GD.self_ignored.map(u => chip('self', u, nameOf(u))).join('') || '<span class="dim">없음</span>';
+  $('roleSel').innerHTML = g.roles.map(r => `<option value="${r.id}">@${esc(r.name)}</option>`).join('');
+}
+async function saveGuild() {
+  await post(`/api/guild/${G}`, { text_channel: val('textCh'), require_owner_present: val('reqOwner') === 'true', hey_only: val('heyOnly') === 'true', voice_reply: val('voiceReply') === 'true', greeting_on: val('greetOn') === 'true', greeting: val('greet'), volume: Math.max(0, Math.min(200, Math.round(+val('volume') || 0))), buffer_minutes: +val('bufMin') });
+  toast('저장됨'); GD = await api(`/api/guild/${G}`); renderServer();
+}
+async function ignore(kind, id, add) {
+  if (!id) return;
+  await post(`/api/guild/${G}/ignore`, { kind, id: String(id), add });
+  GD = await api(`/api/guild/${G}`); renderServer(); toast(add ? '무시 목록에 추가' : '해제');
+}
+async function searchMembers() {
+  const r = await api(`/api/guild/${G}/members?q=${encodeURIComponent(val('memQ'))}`);
+  r.members.forEach(m => GD.names[m.id] = m.name);
+  $('memRes').innerHTML = r.members.map(m => `<div class="row"><span>${esc(m.name)} <span class="dim">@${esc(m.username)}${m.bot ? ' 🤖' : ''}</span></span><button class="g" onclick="ignore('user',${jsq(m.id)},true)">무시</button></div>`).join('') || '<span class="dim">없음</span>';
+}
+
+async function loadUsage() {
+  const u = await api('/api/usage');
+  const t = u.days.find(d => d.date === u.today)?.usage || { paid_calls: 0, free_calls: 0, usd: 0 };
+  $('usSum').innerHTML = `오늘 유료 <b>${t.paid_calls}</b>회 · <b>$${t.usd.toFixed(4)}</b> / 한도 ${u.limits.daily_calls}회 · $${u.limits.daily_usd}<br>오늘 무료 ${t.free_calls}회
+    <br>이번 달 유료 ${u.month.paid_calls}회 · 무료 ${u.month.free_calls}회 · <b>$${u.month.usd.toFixed(3)}</b>
+    ${Object.entries(u.ratelimits).map(([k, r]) => `<br><span class="dim">${esc(k)} 남은 요청 ${esc(r.remaining_requests ?? '?')} · 토큰 ${esc(r.remaining_tokens ?? '?')} (${esc(r.at)})</span>`).join('')}`;
+  $('limCalls').value = u.limits.daily_calls; $('limUsd').value = u.limits.daily_usd;
+  $('usDays').innerHTML = '<tr><th>날짜</th><th>유료</th><th>무료</th><th>금액</th><th>프리셋별</th><th>캐릭터별</th></tr>' + u.days.map(d => {
+    const x = d.usage;
+    return `<tr><td>${d.date}</td><td>${x.paid_calls}</td><td>${x.free_calls}</td><td>$${x.usd.toFixed(4)}</td>
+      <td>${Object.entries(x.presets).map(([k, p]) => `<span class="pill">${esc(k)} ${p.calls}회 · 입${p.input_tokens} 출${p.output_tokens}${p.cache_read_tokens ? ' 캐시' + p.cache_read_tokens : ''}</span>`).join('')}</td>
+      <td>${Object.entries(x.characters).map(([k, n]) => `<span class="pill">${esc(k)} ${n}</span>`).join('')}</td></tr>`;
+  }).join('');
+}
+async function saveLimits() { await post('/api/limits', { daily_calls: +val('limCalls'), daily_usd: +val('limUsd') }); toast('한도 저장'); loadUsage(); }
+
+let CH = { stt: [], tts: [] };
+async function loadProv() {
+  PROV = await api('/api/providers');
+  CH.stt = [...PROV.stt_chain]; CH.tts = [...PROV.tts_chain];
+  renderChains();
+  $('sttAdd').innerHTML = PROV.stt_known.map(x => `<option>${x}</option>`).join('');
+  $('hintOn').value = String(PROV.stt_hint.on); $('hintWords').value = PROV.stt_hint.words; $('hintMin').value = PROV.stt_hint.min_ms;
+  $('ttsAdd').innerHTML = PROV.tts_known.map(x => `<option>${x}</option>`).join('');
+  $('keys').innerHTML = Object.entries(PROV.keys).map(([k, v]) => `<div><span class="mono">${k}</span> ${v ? '<span class="ok">등록됨</span>' : '<span class="dim">없음</span>'}</div>`).join('');
+  $('presetTbl').innerHTML = '<tr><th>프리셋</th><th>공급자 · 모델</th><th>구분</th><th>키</th><th>켜기</th><th>시험</th></tr>' + Object.entries(PROV.presets).map(([k, p]) =>
+    `<tr><td class="mono">${esc(k)}</td><td>${esc(p.provider)} · <span class="mono">${esc(p.model)}</span>${p.effort ? ` <span class="dim">effort ${esc(p.effort)}</span>` : ''}</td>
+     <td>${p.free ? '무료' : `유료 $${(+p.price_in).toFixed(2)}/$${(+p.price_out).toFixed(2)}`}${p.owner_only ? ' · 주인 전용' : ''}${p.trains_on_input ? ' · <span class="bad">⚠️입력 학습</span>' : ''}</td>
+     <td>${p.has_key ? '<span class="ok">있음</span>' : `<span class="dim">없음 (${esc(p.key_env)})</span>`}</td>
+     <td><input type="checkbox" style="width:auto" ${p.disabled ? '' : 'checked'} onchange="togglePreset(${jsq(k)}, !this.checked)"></td>
+     <td><button class="g" ${p.has_key ? '' : 'disabled'} onclick="llmTest(${jsq(k)}, ${p.free ? 'true' : 'false'})">시험</button></td></tr>`).join('');
+  $('freeChain').textContent = '무료 대체 체인(두뇌·대체 두뇌가 다 실패하면): ' + (PROV.free_chain.length ? PROV.free_chain.join(' → ') : '없음');
+}
+function renderChains() {
+  for (const kind of ['stt', 'tts']) {
+    $(kind + 'Chain').innerHTML = CH[kind].map((x, i) => `<li><span class="pill">${i + 1}</span><span class="mono" style="flex:1">${esc(x)}</span>
+      <button class="g" onclick="mv('${kind}',${i},-1)">▲</button><button class="g" onclick="mv('${kind}',${i},1)">▼</button><button class="g" onclick="rm('${kind}',${i})">✕</button></li>`).join('');
+  }
+}
+function mv(k, i, d) { const a = CH[k], j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; renderChains(); }
+function rm(k, i) { CH[k].splice(i, 1); renderChains(); }
+function chainAdd(k) { const v = val(k + 'Add'); if (!CH[k].includes(v)) CH[k].push(v); renderChains(); }
+async function saveHint() {
+  await post('/api/providers', { stt_hint: { on: val('hintOn') === 'true', words: val('hintWords'), min_ms: Math.max(0, Math.min(10000, Math.round(+val('hintMin') || 0))) } });
+  toast('받아쓰기 힌트 저장'); loadProv();
+}
+async function saveChains() { if (!CH.stt.length || !CH.tts.length) return toast('체인이 비면 안 돼요', true); await post('/api/providers', { stt_chain: CH.stt, tts_chain: CH.tts }); toast('체인 저장'); loadProv(); }
+async function resetChains() { await post('/api/providers', { reset_chains: true }); toast('기본값으로'); loadProv(); }
+async function llmTest(k, free) {
+  if (!free && !confirmBox(`${k}는 유료예요. 한 번 불러 볼까요? (하루 한도에 잡혀요)`)) return;
+  $('llmOut').innerHTML = `<p class="dim">${esc(k)} 부르는 중…</p>`;
+  try {
+    const r = await post('/api/llm-test', { preset: k, question: val('llmQ'), fill: $('llmFill').checked });
+    const t = r.tokens;
+    $('llmOut').innerHTML = `<p><b class="mono">${esc(r.preset)}</b> 말 도착 ${r.speech_ms ?? '-'}ms · 전체 ${r.ms}ms · $${r.usd.toFixed(5)} · 입력 ${t.input} 출력 ${t.output} 캐시읽기 ${t.cache_read} 캐시쓰기 ${t.cache_write} · 형식 ${r.format_ok ? '<span class="ok">정상</span>' : '<span class="bad">어긋남</span>'}</p>
+      <p>🔊 ${esc(r.speech)}</p><pre style="white-space:pre-wrap">${esc(r.text)}</pre>`;
+  } catch (e) { $('llmOut').innerHTML = `<p class="bad">${esc(String(e.message || e))}</p>`; }
+  loadUsage && loadUsage();
+}
+async function togglePreset(k, disabled) { await post('/api/providers', { preset: k, disabled }); toast(disabled ? `${k} 끔` : `${k} 켬`); }
+
+const STT_KIND = { ok: ['받아씀', 'ok'], noise: ['잡음 버림', 'dim'], filtered: ['환각·빈 결과 거름', 'warn'], failed: ['실패', 'bad'] };
+let bufTimer = null;
+function autoBuf() {
+  clearInterval(bufTimer); bufTimer = null;
+  if ($('bufAuto').checked) bufTimer = setInterval(() => { if ($('t-convo').classList.contains('on') && !document.hidden) loadBuffer(true).catch(() => {}); }, 2000);
+}
+// quiet: 자동 새로고침은 실패해도 2초마다 알림을 띄우지 않는다
+async function loadBuffer(quiet = false) {
+  const r = await api(`/api/guild/${G}/buffer`, {}, quiet);
+  const st = r.stats;
+  $('sttHead').innerHTML = `<p>${r.sidecar_ok ? '<span class="ok">받아쓰기 서버 정상</span>' : '<span class="bad">받아쓰기 서버 꺼짐</span>'} · ${st ? (r.listening ? '<span class="ok">듣는 중</span>' : '<span class="warn">음성 채널엔 있지만 안 들음(주인 없음 등)</span>') : '<span class="dim">음성 채널에 없음</span>'}
+    · 체인 <span class="mono">${esc(r.stt_chain.join(' → '))}</span> · 마지막 사용 <span class="mono">${esc(r.stt_last || '-')}</span>
+    ${st ? `<br>발화 ${esc(st.utterances)} · 잡음 버림 ${esc(st.dropped_noise)} · 환각 거름 ${esc(st.stt_filtered)} · 실패 ${esc(st.stt_failed)} · 호출 ${esc(st.wakes)} · 대답 ${esc(st.answers)}
+      <br><span class="dim">수신 진단: 소리 묶음 ${esc(st.rx_frames)} · 누구인지 모름 ${esc(st.rx_unknown)} · 걸러짐(무시·안 들음) ${esc(st.rx_blocked)}${st.rx_frames === 0 ? ' — <span class="warn">디스코드에서 소리가 전혀 안 들어오고 있어요</span>' : ''}</span>` : ''}</p>`;
+  $('sttLog').innerHTML = r.events.length
+    ? `<tr><th>시각</th><th>누가</th><th>결과</th><th>말 길이</th><th>받아쓰기</th><th>공급자</th><th>글자</th><th>호출</th></tr>` + r.events.map(e => {
+        const [label, cls] = STT_KIND[e.kind] || [e.kind, ''];
+        return `<tr><td class="dim">${esc(e.time)}</td><td>${esc(e.speaker)}</td><td class="${cls}">${esc(label)}</td><td>${(e.audio_ms / 1000).toFixed(1)}초</td><td>${e.stt_ms ? esc(e.stt_ms) + 'ms' : '-'}</td><td class="mono">${esc(e.provider || '-')}</td><td>${e.chars || '-'}</td><td>${e.wake ? '📣 ' + esc(e.wake) : ''}</td></tr>`;
+      }).join('')
+    : '<tr><td class="dim">아직 기록이 없어요 — 음성 채널에서 말하면 여기에 나와요</td></tr>';
+  $('buf').innerHTML = r.lines.map(l => `<div class="line"><span class="t">${esc(l.time)}</span><b class="${l.user === 0 ? 'char0' : ''}">${esc(l.speaker)}</b>: ${esc(l.text)}</div>`).join('') || '<span class="dim">비어 있어요</span>';
+}
+async function loadMems() {
+  const r = await api(`/api/guild/${G}/memories`);
+  $('mems').innerHTML = r.memories.length
+    ? r.memories.map((m, i) => `<div class="line"><span class="t">${esc(m.date)}</span>${esc(m.text)} <span class="dim">— ${esc(m.by)}</span> <button class="r" style="padding:1px 8px" onclick="memDel(${i})">✕</button></div>`).join('')
+    : '<span class="dim">아직 없어요 — 음성으로 "클짱, ○○ 기억해" 하면 여기에 남아요</span>';
+}
+async function memDel(i) { await post(`/api/guild/${G}/memories`, { remove: i }); loadMems(); }
+async function memAdd() { const t = val('memAdd').trim(); if (!t) return; await post(`/api/guild/${G}/memories`, { add: t }); $('memAdd').value = ''; loadMems(); }
+async function memClear() { if (!confirmBox('장기 기억을 전부 지울까요?')) return; await post(`/api/guild/${G}/memories`, { clear: true }); loadMems(); }
+async function loadTraces() {
+  const r = await api(`/api/guild/${G}/llm-log`);
+  $('traces').innerHTML = r.traces.length
+    ? r.traces.map(t => `<details class="line"><summary><span class="t">${esc(t.time)}</span><b>${esc(t.character)}</b> ← ${esc(t.caller)} · <span class="mono">${esc(t.preset)}</span> · ${esc(t.ms)}ms · $${Number(t.usd).toFixed(5)} · 입력 ${esc(t.tokens[0])} 출력 ${esc(t.tokens[1])} 캐시 ${esc(t.tokens[2])}</summary>
+        <p class="dim">받은 원문</p><pre style="white-space:pre-wrap">${esc(t.raw)}</pre>
+        <p class="dim">보낸 프롬프트</p><pre style="white-space:pre-wrap;max-height:360px;overflow:auto">${esc(t.prompt)}</pre></details>`).join('')
+    : '<span class="dim">아직 없어요 — 음성 채널에서 부르면 여기에 나와요</span>';
+}
+async function forget() { if (!confirmBox('기억한 대화를 전부 지울까요?')) return; await post(`/api/guild/${G}/forget`); loadBuffer(); toast('지웠어요'); }
+
+function renderOps() { $('voiceCh').innerHTML = guildObj().voice_channels.map(c => `<option value="${c.id}">🔊 ${esc(c.name)}</option>`).join(''); }
+async function joinCh() { await post(`/api/guild/${G}/join`, { channel: val('voiceCh') }); toast('들어갔어요'); refreshStatus(); }
+async function leaveCh() { await post(`/api/guild/${G}/leave`); toast('나갔어요'); refreshStatus(); }
+
+boot().catch(() => showLogin());
+</script>
+</body>
+</html>

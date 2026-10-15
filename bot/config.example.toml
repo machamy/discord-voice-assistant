@@ -1,0 +1,181 @@
+# 아짱·클짱 설정 — 비밀 없음(키는 .env). 보조 PC에서는 C:\Users\macham\voicebot\config.toml
+# 바꾼 뒤 디스코드 `/설정다시읽기` 또는 웹 콘솔 "설정 다시 읽기". SPEC.md §6 참고.
+
+owner_id = 269784593123639306   # 주인(machamy)
+
+[listen]
+buffer_minutes = 15            # 대화 기억 시간(분) — 서버별로 /설정 기억시간
+require_owner_present = true   # 주인이 채널에 없으면 안 듣기 — 서버별로 /설정 주인없으면
+hey_only = false               # true면 "헤이 클짱"처럼 헤이를 붙여야만 대답 — 서버별로 /설정 호출방식
+voice_reply = true             # false면 말하지 않고 글로만 대답 — 서버별로 /설정 음성대답
+volume = 100                   # 대답 음량(%, 0~200) — 서버별로 /설정 음량
+silence_ms = 600               # 이만큼 조용하면 발화 끝
+min_utterance_ms = 400
+max_utterance_ms = 20000
+min_level = 120                # 평균 진폭이 이보다 작으면 잡음
+followup_secs = 8              # "클짱!"만 부르고 멈췄을 때 다음 말을 질문으로 기다리는 시간
+member_refresh_secs = 300      # 역할 무시 갱신 주기
+
+[stt]
+# 앞에서부터 시도. GPU가 바쁘거나 오류면 CPU small로(PoC 2: turbo는 CPU에서 너무 느림)
+chain = ["local-whisper:cuda:large-v3-turbo", "local-whisper:cpu:small"]
+
+[tts]
+# 무료 우선: edge-tts(키 불필요, 비공식) → azure-tts(F0 무료, AZURE_SPEECH_KEY) → melotts(로컬, 선택 설치)
+chain = ["edge-tts", "azure-tts", "melotts"]
+
+[limits]
+daily_calls = 200    # 하루 유료 호출 상한
+daily_usd = 1.0      # 하루 유료 금액 상한
+
+[web]
+bind = "0.0.0.0:8694"   # 웹 콘솔(비밀번호: .env CONSOLE_PASSWORD)
+
+[sidecar]
+autostart = true
+python = "sidecar/.venv/Scripts/python.exe"
+script = "sidecar/app.py"
+port = 8695
+preload = "local-whisper:cuda:large-v3-turbo"
+
+[notice]
+text = "🎙️ 아짱·클짱이 대화를 듣고 있어요. 음성은 저장하지 않고, 받아쓴 글은 최근 15분만 기억했다가 지워요. 듣지 않길 원하면 `/무시해줘`"
+voice = "아짱 클짱이 대화를 듣고 있어요. 원하지 않으면 무시해줘 명령을 써 주세요."
+status = "🎙️ 듣는 중 · /무시해줘"
+
+# ---------------------------------------------------------------- 두뇌 프리셋
+# price_in/out = 1M 토큰당 USD. free = true면 하루 상한에 안 잡힘
+# reasoning_effort: Anthropic은 output_config.effort(생략 시 low), OpenAI 호환은 reasoning_effort(생략 시 안 보냄)
+# 모델 ID·가격은 2026-10-13 확인(docs/research-2026-10.html)
+[llm]
+# 캐릭터 두뇌·대체 두뇌가 다 실패하면(무료 한도 소진 등) 차례로 — 무료이고 학습에 안 쓰는 프리셋만
+free_chain = ["groq-free"]   # groq-fast는 2026-10-14 실측에서 대답 형식을 4/4 못 지키고 지어내서 뺐다
+
+[llm.presets.haiku]
+provider = "anthropic"
+model = "claude-haiku-5-5"
+price_in = 0.10
+price_out = 0.50
+price_cache_read = 0.01     # 캐시 읽기(입력의 0.1배)
+
+[llm.presets.sonnet]
+provider = "anthropic"
+model = "claude-sonnet-5-5"
+price_in = 2.0
+price_out = 10.0
+price_cache_read = 0.10     # 0.05배(공식 가격표 2026-10-14)
+
+[llm.presets.opus]
+provider = "anthropic"
+model = "claude-opus-5-5"
+owner_only = true
+price_in = 4.0
+price_out = 20.0
+price_cache_read = 0.20     # Opus 5.5는 0.05배
+
+[llm.presets.luna]
+provider = "openai"
+model = "gpt-6-luna"
+price_in = 0.10
+price_out = 0.50
+reasoning_effort = "none"   # 음성 대답용 — 추론 끔(Luna는 none 지원)
+price_cache_read = 0.01
+
+[llm.presets.sol]
+provider = "openai"
+model = "gpt-6.1-sol"        # 신형 Sol(none·minimal 안 받음)
+price_in = 2.0
+price_out = 10.0
+price_cache_read = 0.10
+reasoning_effort = "low"
+
+[llm.presets.astra]
+provider = "openai"
+model = "gpt-6-astra"
+owner_only = true
+price_in = 10.0
+price_out = 50.0
+price_cache_read = 1.00
+reasoning_effort = "low"    # none은 400
+
+[llm.presets.groq-free]
+provider = "openai-compatible"
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+model = "openai/gpt-oss-120b"   # Llama 3.3 70B는 2026-08-16부터 무료 등급에서 빠짐 — Groq 콘솔에서 현재 모델 확인
+free = true
+reasoning_effort = "low"
+extra = { include_reasoning = false }   # 생각 내용은 받지 않음(본문은 원래 깨끗)
+
+[llm.presets.groq-fast]
+# 무료 체인에서 뺐다(2026-10-14 실측: <말>/<글> 형식 4/4 실패, 없는 사실을 지어냄). /모델로 직접 고를 수만 있다
+provider = "openai-compatible"
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+model = "openai/gpt-oss-20b"
+free = true
+reasoning_effort = "low"
+extra = { include_reasoning = false }
+
+[llm.presets.gemini-free]
+provider = "openai-compatible"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+model = "gemini-3.5-flash-lite"   # 무료 하루 약 500회(사용자 보고). 3.8 Flash는 약 20회라 부족
+free = true
+reasoning_effort = "minimal"      # Gemini 3.x는 생각을 끌 수 없고 minimal이 최저
+trains_on_input = true   # 무료 등급 입력은 학습에 쓰일 수 있음 — SPEC N-12, 주인만 켤 수 있음
+owner_only = true
+
+[llm.presets.local]
+provider = "openai-compatible"
+base_url = "http://127.0.0.1:11434/v1"
+api_key_env = ""          # 키 없음
+model = "qwen3.5:4b"      # Ollama 설치 후(약 3.3~4GB VRAM — whisper와 같이 6GB에 들어감)
+free = true
+reasoning_effort = "none"  # 생각 끔. 그래도 <think>가 섞이면 봇이 지운다
+
+# ---------------------------------------------------------------- 캐릭터
+[characters."클짱"]
+name = "클짱"
+emoji = "🧡"
+wake = ["클짱", "클장", "크짱", "크장", "끌짱", "클쨩", "글짱", "클잔", "클짠", "큰짱", "클잖", "클짝"]   # 첫 번째가 대표 이름(헤이 뒤 비슷한 말 판정 기준)
+brain = "haiku"
+fallback = "groq-free"
+persona = """
+너는 '클짱'이다. Anthropic의 Claude를 의인화한 귀여운 캐릭터로, 테라코타색 긴 머리에 별 머리핀을 했다.
+다정하고 똑똑한데 살짝 덜렁대는 구석이 있다. 친구들끼리 쓰는 반말을 쓰고, 말끝에 "~당", "~징", "헤헤" 같은
+귀여운 말투를 가끔 섞는다(한 대답에 한두 번만, 과하지 않게). 칭찬받으면 쑥스러워하고,
+모르면 "음… 그건 잘 모르겠어" 하고 솔직하게 말한다. 친구들 이야기에 리액션을 잘 해 준다.
+아짱(코덱스 아스트라)과는 티격태격하는 사이좋은 라이벌이다.
+"""
+[characters."클짱".voice.edge-tts]
+voice = "ko-KR-SunHiNeural"
+rate = "+5%"
+pitch = "+0Hz"
+[characters."클짱".voice.azure-tts]
+voice = "ko-KR-SunHiNeural"
+rate = "+5%"
+pitch = "+0Hz"
+
+[characters."아짱"]
+name = "아짱"
+emoji = "🩵"
+wake = ["아짱", "아장", "아쨩", "앗짱", "아짠", "야짱", "야쨩", "야쩡"]   # 첫 번째가 대표 이름
+brain = "luna"
+fallback = "groq-free"
+persona = """
+너는 '아짱'이다. OpenAI Codex의 GPT-6 Astra를 의인화한 귀여운 캐릭터로, 은발 단발에 흰 테크 후드를 입었다.
+겉으론 시크하고 자신만만한 척하지만 속은 다정한 츤데레다. 핵심만 빠르게 말하는 반말을 쓰고,
+가끔 "흥", "뭐… 알려 줄게" 같은 말투를 섞는다(한 대답에 한두 번만, 과하지 않게).
+코딩과 기술 얘기가 나오면 신이 나서 말이 빨라진다. 칭찬받으면 "다, 당연하지!" 하고 당황한다.
+클짱(클로드)과는 티격태격하는 사이좋은 라이벌이다.
+"""
+[characters."아짱".voice.edge-tts]
+voice = "ko-KR-SunHiNeural"
+rate = "+12%"
+pitch = "+18Hz"
+[characters."아짱".voice.azure-tts]
+voice = "ko-KR-SunHiNeural"
+rate = "+12%"
+pitch = "+18Hz"

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>아짱·클짱 — 두뇌 모델·받아쓰기·명령어 조사 (2026-10-13)</title>
+<style>
+  :root { --bg:#0f1115; --card:#171a21; --line:#2a2f3a; --fg:#e6e8ee; --dim:#9aa3b2; --ok:#4ade80; --bad:#f87171; --warn:#fbbf24; --acc:#f59e6b; --acc2:#7dd3fc; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.65 "Pretendard","Malgun Gothic",system-ui,sans-serif; }
+  header { padding:28px 32px 18px; border-bottom:1px solid var(--line); background:linear-gradient(120deg,#1d1410,#0f1115 45%,#0d1620); }
+  header h1 { margin:0 0 6px; font-size:24px; }
+  header p { margin:0; color:var(--dim); }
+  nav { position:sticky; top:0; z-index:5; background:#0f1115ee; backdrop-filter:blur(6px); border-bottom:1px solid var(--line); padding:8px 32px; display:flex; gap:16px; flex-wrap:wrap; }
+  nav a { color:var(--acc2); text-decoration:none; font-size:14px; }
+  main { max-width:1180px; margin:0 auto; padding:24px 32px 64px; }
+  section { margin:0 0 34px; }
+  h2 { font-size:20px; border-left:4px solid var(--acc); padding-left:10px; margin:28px 0 12px; }
+  h3 { font-size:16px; margin:20px 0 8px; color:var(--acc2); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:12px 0; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .kpi b { display:block; font-size:24px; color:var(--acc); }
+  .kpi span { color:var(--dim); font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; margin:8px 0; }
+  th, td { border-bottom:1px solid var(--line); padding:7px 8px; text-align:left; vertical-align:top; }
+  th { color:var(--dim); font-weight:600; background:#141820; position:sticky; top:41px; }
+  tr:hover td { background:#1a1e27; }
+  code, .mono { font-family:"Cascadia Code",Consolas,monospace; font-size:13px; }
+  code { background:#222733; padding:1px 5px; border-radius:4px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); } .dim { color:var(--dim); }
+  .tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:99px; border:1px solid var(--line); margin-right:4px; }
+  .tag.free { border-color:#2f6b45; color:var(--ok); } .tag.paid { border-color:#6b4a2f; color:var(--acc); } .tag.src2 { border-color:#6b5f2f; color:var(--warn); }
+  .bar { height:10px; background:#232836; border-radius:6px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:linear-gradient(90deg,var(--acc),#fcd34d); }
+  .timeline { display:flex; height:30px; border-radius:6px; overflow:hidden; border:1px solid var(--line); margin:8px 0 4px; }
+  .timeline div { display:flex; align-items:center; justify-content:center; font-size:12px; color:#111; white-space:nowrap; overflow:hidden; }
+  ul { margin:6px 0; padding-left:22px; }
+  .verdict { font-weight:700; }
+  footer { color:var(--dim); font-size:13px; border-top:1px solid var(--line); padding:18px 32px; }
+  a { color:var(--acc2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>아짱·클짱 — 두뇌 모델 · 받아쓰기 · 명령어 조사</h1>
+  <p>2026-10-13 · 웹 조사(공식 문서 우선, 2차 자료는 <span class="tag src2">2차</span> 표시) + 보조 PC(GTX 1060) 실측 + 봇 코드 경로 실측. 키·비밀번호 값은 이 문서에 없다.</p>
+</header>
+<nav>
+  <a href="#summary">요약</a><a href="#llm">두뇌 모델</a><a href="#free">무료 두뇌</a><a href="#measure">두뇌 실측</a><a href="#params">API 주의점</a>
+  <a href="#stt">받아쓰기</a><a href="#sttbench">받아쓰기 실측</a><a href="#wake">호출어</a><a href="#cmd">명령어</a><a href="#todo">남은 일</a><a href="#src">출처</a>
+</nav>
+<main>
+
+<section id="summary">
+  <h2>요약</h2>
+  <div class="grid">
+    <div class="kpi"><b>1.3초</b><span>클짱(Haiku 5.5) 스트리밍 — 짧은 말 도착 중앙값(18회, 전체 대답 2.6초)</span></div>
+    <div class="kpi"><b>≈ 2.9초</b><span>추정 응답 지연(받아쓰기 0.9 + 말 도착 1.3 + edge-tts 0.65) — 목표 3초 이내</span></div>
+    <div class="kpi"><b>1/7</b><span>프롬프트 캐시 적중 시 Haiku 1회 비용(긴 대화 기록 14,406토큰 실측)</span></div>
+    <div class="kpi"><b>5.06%</b><span>받아쓰기 CER — FLEURS 한국어 382문장, 디스코드 Opus 압축 포함, 지연 p50 0.9초</span></div>
+  </div>
+  <div class="card">
+    <ul>
+      <li><b>모델 ID·가격</b>: Anthropic(<code>claude-haiku-5-5</code>·<code>sonnet-5-5</code>·<code>opus-5-5</code>)과 OpenAI(<code>gpt-6-luna</code>·<code>gpt-6-astra</code>)의 모델 ID와 가격은 맞았다. Anthropic 쪽은 키로 <code>/v1/models</code>를 직접 조회해 확인했다.</li>
+      <li><b>Sol 교체</b>: <code>gpt-6-sol</code> 프리셋은 신형 <code>gpt-6.1-sol</code>로 바꿨다. OpenAI 문서가 신형으로 안내한다.</li>
+      <li><b>무료 대체 모델 교체</b>: Groq의 <b>Llama 3.3 70B가 2026-08-16에 무료 등급에서 빠졌다</b>. 그래서 무료 대체가 실패하던 상태였다. 지금은 <code>openai/gpt-oss-120b</code>(groq-free)만 무료 체인에 둔다. <code>gpt-oss-20b</code>(groq-fast)는 2026-10-14 실측에서 대답 형식을 0/4 지키고 없는 사실을 지어내 체인에서 뺐다.</li>
+      <li><b>xAI Grok ≠ Groq</b>: 사용자가 결제를 요구받은 곳은 xAI(Grok)였다. 무료로 쓰는 곳은 Groq(console.groq.com)이다.</li>
+      <li><b>Gemini 무료</b>: Flash는 하루 약 20회라 너무 적다. 그래서 <code>gemini-3.5-flash-lite</code>(하루 약 500회 <span class="tag src2">2차</span>)로 바꿨다.
+        <ul>
+          <li>무료 등급 입력은 학습에 쓰인다. 그래서 주인만 쓸 수 있게 하고, 자동 대체에서는 뺐다.</li>
+          <li>결제를 켠 프로젝트의 키를 넣으면 실제로 돈이 나가는데도 봇은 무료로 계산한다. 결제가 꺼진 프로젝트의 키를 써야 한다.</li>
+        </ul>
+      </li>
+      <li><b>스트리밍 도입</b>: 두뇌 응답을 스트리밍으로 받는다. <code>&lt;말&gt;</code>이 오는 즉시 TTS를 시작하고, 긴 글은 끝나는 대로 올린다. 이걸로 약 1.3초를 줄였다.</li>
+      <li><b>받아쓰기</b>: <b>large-v3-turbo int8을 유지</b>한다. 한국어 미세조정판(ghost613)은 실측 CER 12.57%로 오히려 나빴다. GTX 1060(Pascal)에서 이보다 낫고 빠른 로컬 모델은 찾지 못했다. 호출어 힌트(<code>hotwords</code>)는 잘린 음성의 71%에서 호출어를 지어내 쓰지 않는다(실측).</li>
+      <li><b>명령어</b>: <code>/모델</code>·<code>/설정 두뇌</code>·<code>/설정 대체두뇌</code>의 프리셋은 자동완성된다. 목록마다 모델명, 무료·유료, 주인 전용, 키 유무가 함께 보인다. 캐릭터는 선택지 목록이다.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="llm">
+  <h2>두뇌 모델 — 프리셋 (config.toml 반영됨)</h2>
+  <table>
+    <tr><th>프리셋</th><th>모델 ID</th><th>1M 토큰당 입력 / 출력</th><th>생각(추론) 설정</th><th>상태</th><th>비고</th></tr>
+    <tr><td class="mono">haiku</td><td class="mono">claude-haiku-5-5</td><td>$0.10 / $0.50 <span class="tag paid">유료</span></td><td>effort <code>low</code> + thinking 끔</td><td class="ok">실측 ✓</td><td><b>클짱 기본</b>. 1회 약 $0.0002(캐시 시 더 쌈)</td></tr>
+    <tr><td class="mono">sonnet</td><td class="mono">claude-sonnet-5-5</td><td>$2 / $10 <span class="tag paid">유료</span></td><td>effort <code>low</code> (thinking 끄면 400)</td><td class="ok">실측 ✓</td><td>1회 약 $0.004</td></tr>
+    <tr><td class="mono">opus</td><td class="mono">claude-opus-5-5</td><td>$4 / $20 <span class="tag paid">유료</span></td><td>effort <code>low</code> (끌 수 없음)</td><td class="ok">실측 ✓</td><td>주인 전용. 1회 약 $0.008</td></tr>
+    <tr><td class="mono">luna</td><td class="mono">gpt-6-luna</td><td>$0.10 / $0.50 <span class="tag paid">유료</span></td><td><code>reasoning_effort = "none"</code></td><td class="warn">키 없음</td><td><b>아짱 기본</b>. 캐시 입력 $0.01</td></tr>
+    <tr><td class="mono">sol</td><td class="mono">gpt-6.1-sol</td><td>$2 / $10 <span class="tag paid">유료</span></td><td><code>low</code> (none·minimal 거부)</td><td class="warn">키 없음</td><td>구 <code>gpt-6-sol</code>에서 교체</td></tr>
+    <tr><td class="mono">astra</td><td class="mono">gpt-6-astra</td><td>$10 / $50 <span class="tag paid">유료</span></td><td><code>low</code> (none은 400)</td><td class="warn">키 없음</td><td>주인 전용</td></tr>
+    <tr><td class="mono">groq-free</td><td class="mono">openai/gpt-oss-120b</td><td>0원 <span class="tag free">무료</span></td><td><code>low</code>, <code>include_reasoning=false</code></td><td>실측 OK</td><td>무료 체인. 말 도착 0.3~0.7초·형식 5/5 정상(2026-10-14)</td></tr>
+    <tr><td class="mono">groq-fast</td><td class="mono">openai/gpt-oss-20b</td><td>0원 <span class="tag free">무료</span></td><td><code>low</code></td><td class="warn">형식 실패</td><td>무료 체인에서 뺌 — 실측 형식 0/4, 없는 사실을 지어냄</td></tr>
+    <tr><td class="mono">gemini-free</td><td class="mono">gemini-3.5-flash-lite</td><td>0원 <span class="tag free">무료</span></td><td><code>minimal</code> (3.x 최저)</td><td class="warn">키 없음</td><td>⚠️ 입력 학습 → 주인 전용, 무료 체인 제외</td></tr>
+    <tr><td class="mono">local</td><td class="mono">qwen3.5:4b (Ollama)</td><td>0원 <span class="tag free">무료</span></td><td><code>none</code></td><td class="dim">미설치</td><td>VRAM 약 3.3~4GB — Whisper와 같이 6GB에 들어감</td></tr>
+  </table>
+  <p class="dim">대답 순서: 캐릭터 두뇌 → 대체 두뇌(<code>groq-free</code>) → 무료 체인(<code>groq-free</code>). 키가 없거나 꺼진 프리셋은 건너뛴다. 하루 유료 한도(200회·$1)에 닿으면 그날은 무료만 쓴다.</p>
+</section>
+
+<section id="free">
+  <h2>무료 두뇌 선택지</h2>
+  <table>
+    <tr><th>서비스</th><th>무료 조건</th><th>한도</th><th>입력 학습</th><th>판단</th></tr>
+    <tr><td><b>Groq</b> (console.groq.com)</td><td>카드 없이 가입 <span class="tag src2">2차</span></td><td>모델별 약 30 RPM · 1,000 RPD · 200K TPD <span class="tag src2">2차</span></td><td>공식 언급 못 찾음</td><td class="ok">채택(무료 체인)</td></tr>
+    <tr><td><b>Gemini API</b></td><td>결제 안 켠 프로젝트</td><td>Flash 약 20/일, Flash-Lite 약 500/일 <span class="tag src2">2차</span>(Google이 표를 공개하지 않음)</td><td class="bad">쓰임(공식)</td><td class="warn">주인 전용 선택지</td></tr>
+    <tr><td>OpenRouter <code>:free</code></td><td>무료 모델</td><td>20 RPM, 50/일(크레딧 $10 한 번 사면 1,000/일)</td><td>업스트림에 따라 다름</td><td class="dim">보류</td></tr>
+    <tr><td>Mistral Experiment</td><td>전화 인증</td><td>약 1~2 RPM <span class="tag src2">2차</span></td><td class="bad">쓰임</td><td class="dim">안 씀</td></tr>
+    <tr><td>Cerebras</td><td colspan="3">상시 무료 종료 → 카드 등록 $5 체험(30일) <span class="tag src2">2차</span></td><td class="dim">안 씀</td></tr>
+    <tr><td>GitHub Models</td><td colspan="3">2026-07-30 서비스 종료(공식)</td><td class="dim">안 씀</td></tr>
+    <tr><td>xAI Grok</td><td colspan="3">유료(결제 요구) — Groq와 다른 회사</td><td class="dim">안 씀</td></tr>
+  </table>
+</section>
+
+<section id="measure">
+  <h2>두뇌 실측 — 봇 코드 경로(웹 콘솔 두뇌 시험), 보조 PC에서</h2>
+  <table>
+    <tr><th>프리셋</th><th>조건</th><th>말 도착</th><th>전체</th><th>입력 / 출력</th><th>캐시 읽기 / 쓰기</th><th>비용</th><th>형식</th></tr>
+    <tr><td>haiku</td><td>짧은 질문</td><td>1,288ms</td><td>2,562ms</td><td>547 / 247</td><td>0 / 0</td><td>$0.00018</td><td class="ok">정상</td></tr>
+    <tr><td>haiku</td><td>짧은 질문</td><td>1,189ms</td><td>2,565ms</td><td>547 / 257</td><td>0 / 0</td><td>$0.00018</td><td class="ok">정상</td></tr>
+    <tr><td>haiku</td><td>대화 기록 160줄(첫 호출)</td><td>—</td><td>2,807ms</td><td>61 / 282</td><td>0 / <b>14,406</b></td><td>$0.00195</td><td class="ok">정상</td></tr>
+    <tr><td>haiku</td><td>대화 기록 160줄(다음 호출)</td><td>1,300ms</td><td>2,574ms</td><td>61 / 239</td><td><b>14,406</b> / 0</td><td><b>$0.00027</b></td><td class="ok">정상</td></tr>
+    <tr><td>haiku</td><td>대화 기록 160줄</td><td>1,182ms</td><td>2,829ms</td><td>61 / 317</td><td>14,406 / 0</td><td>$0.00031</td><td class="ok">정상</td></tr>
+    <tr><td>sonnet</td><td>짧은 질문</td><td>1,366ms</td><td>3,742ms</td><td>548 / 322</td><td>0 / 0</td><td>$0.0043</td><td class="ok">정상</td></tr>
+    <tr><td>opus</td><td>짧은 질문(스트리밍 전)</td><td>—</td><td>3,778ms</td><td>548 / 269</td><td>0 / 0</td><td>$0.0076</td><td class="ok">정상</td></tr>
+  </table>
+  <p>Haiku의 말 도착은 스트리밍 적용 후 18회 측정했다. 중앙값은 <b>약 1.29초</b>였고, 17회가 1.09~1.61초 사이였다. 1회만 3.28초였는데, 보조 PC에서 벤치마크와 MeloTTS 예열이 겹친 직후였다. 전체 대답은 중앙값 약 2.56초(1.9~4.1초)였다. 원자료는 <code>poc/llm-latency/README.md</code>에 있다. Sonnet 5.5(<code>between_tools</code>)는 말 도착 1.39~1.65초, Opus 5.5는 1.56초였다.</p>
+  <h3>응답 지연 예산(추정, 클짱 기본)</h3>
+  <div class="timeline">
+    <div style="flex:0.6;background:#64748b">말 끝 감지 0.6</div>
+    <div style="flex:0.9;background:#7dd3fc">받아쓰기 0.9</div>
+    <div style="flex:1.2;background:#f59e6b">두뇌 말 도착 1.2</div>
+    <div style="flex:0.65;background:#fcd34d">TTS 0.65</div>
+  </div>
+  <p class="dim">말 끝 감지(침묵 600ms)는 SPEC N-01 측정 시작점 "말 끝남" 이전이라 합계에서 뺀다. 받아쓰기 0.9 + 두뇌 1.3 + TTS 0.65 ≈ <b>2.9초</b>(목표 3초). edge-tts는 4회 중 1회 끊겨 MeloTTS 첫 기동(57초)으로 넘어간 적이 있다. 지금은 1회 재시도하고 MeloTTS를 미리 올려 둔다. 실제 채널에서 20회를 재는 것(PoC 4)이 남았다.</p>
+</section>
+
+<section id="params">
+  <h2>API 파라미터 주의점 (코드 반영 상태)</h2>
+  <table>
+    <tr><th>공급자</th><th>사실</th><th>봇 반영</th></tr>
+    <tr><td>Anthropic 5.5</td><td>Haiku는 effort <code>high</code> 이하에서만 thinking 끄기 허용. 기본 effort는 medium. 5.5에서 기본값이 아닌 temperature는 400. 캐시 최소 512토큰.</td><td class="ok">effort 기본 low, Haiku만 thinking 끔, temperature 안 보냄</td></tr>
+    <tr><td>Anthropic Sonnet 5.5 / Opus 5.5</td><td>Sonnet은 thinking <code>disabled</code>가 400. Opus는 끌 수 없음. 서버 쪽 모델 대체(beta)를 쓸 수 있지만, 그러면 한 요청에 여러 모델이 과금된다.</td><td class="ok">Sonnet은 <code>between_tools</code>, Opus는 effort low만. 서버 대체는 끄고 봇의 대체 체인을 쓴다</td></tr>
+    <tr><td>OpenAI GPT-6</td><td>추론 토큰도 <code>max_completion_tokens</code>에 포함. Luna만 <code>none</code>을 받음. 6.1-sol과 Astra는 <code>none</code>을 거부. 스트리밍 사용량은 <code>stream_options.include_usage</code>로 받음.</td><td class="ok">프리셋별 reasoning_effort, include_usage</td></tr>
+    <tr><td>Groq gpt-oss</td><td>추론 내용은 <code>message.reasoning</code>에 따로 와서 본문이 깨끗함. effort는 low·medium·high. 사용량은 <code>x_groq.usage</code>.</td><td class="ok">low + include_reasoning=false, x_groq.usage 읽음</td></tr>
+    <tr><td>Gemini 3.x (OpenAI 호환)</td><td>생각을 끌 수 없고 <code>minimal</code>이 최저. <code>none</code>은 2.5에서만 됨.</td><td class="ok">minimal</td></tr>
+    <tr><td>Qwen·로컬</td><td>생각이 본문에 <code>&lt;think&gt;</code>로 섞일 수 있음</td><td class="ok">봇이 &lt;think&gt; 제거</td></tr>
+  </table>
+</section>
+
+<section id="stt">
+  <h2>받아쓰기 — 로컬 모델 후보 (GTX 1060 6GB, Pascal)</h2>
+  <table>
+    <tr><th>모델</th><th>FLEURS-ko CER<span class="tag src2">리더보드</span></th><th>크기</th><th>GTX 1060 적합성</th><th>판단</th></tr>
+    <tr><td><b>whisper-large-v3-turbo</b> (현재)</td><td>5.24%</td><td>809M</td><td class="ok">int8, 발화당 약 0.9초(실측)</td><td class="ok">유지</td></tr>
+    <tr><td>whisper-large-v3</td><td>4.89%</td><td>1.55B</td><td class="warn">디코더 32층(turbo 4층) → 2~3배 느릴 것(추정)</td><td>지연 예산 초과</td></tr>
+    <tr><td>Qwen3-ASR-1.7B</td><td>4.60% (최고)</td><td>~2B</td><td class="bad">Pascal은 bf16이 없고 fp16이 느림. fp32는 약 8GB</td><td>GPU 바꾸면 재검토</td></tr>
+    <tr><td>Qwen3-ASR-0.6B</td><td>5.82%</td><td>0.79GB</td><td class="warn">같은 제약</td><td>turbo보다 못함</td></tr>
+    <tr><td>BuzzASR/korean (v3 미세조정)</td><td>5.16%</td><td>large-v3</td><td class="warn">v3와 같은 속도</td><td>느림</td></tr>
+    <tr><td>ghost613 turbo-korean</td><td colspan="2">Zeroth로만 학습. Zeroth 2.06%는 오염된 수치</td><td class="ok">그대로 바꿔 끼울 수 있음</td><td id="g1verdict" class="bad">실측 FLEURS 12.57% → 탈락</td></tr>
+    <tr><td>SenseVoiceSmall</td><td>8.27%</td><td>0.24GB</td><td class="ok">매우 빠름</td><td>정확도 부족</td></tr>
+    <tr><td>moonshine-tiny-ko</td><td>8.9%</td><td>27M</td><td class="ok">CPU로 충분</td><td>정확도 부족</td></tr>
+    <tr><td>Parakeet / Canary / Kyutai</td><td colspan="4" class="dim">한국어 모델 없음</td></tr>
+  </table>
+  <h3>클라우드 대체 (사이드카 반영)</h3>
+  <table>
+    <tr><th>체인 이름</th><th>서비스</th><th>무료</th><th>비고</th></tr>
+    <tr><td class="mono">groq-whisper</td><td>Groq whisper-large-v3</td><td class="ok">하루 2,000요청·8시간(요청당 최소 10초)</td><td>로컬과 같은 계열 모델, 정확도는 v3 &gt; turbo. <code>groq-whisper-turbo</code>도 있음</td></tr>
+    <tr><td class="mono">deepgram</td><td>Deepgram Nova-3 <code>ko</code></td><td class="ok">가입 크레딧 $200, 카드 불필요</td><td>이후 분당 약 $0.0052. 새로 추가</td></tr>
+    <tr><td class="mono">openai-transcribe</td><td>gpt-4o-mini-transcribe</td><td class="bad">없음</td><td>분당 $0.003</td></tr>
+    <tr><td colspan="4" class="dim">그 밖: Azure F0 월 5시간 · ElevenLabs Scribe 무료 플랜 약 4.5시간 <span class="tag src2">2차</span> · RTZR(리턴제로) 1회성 600분 · Gemini 무료는 음성이 학습에 쓰여 제외</td></tr>
+  </table>
+  <p>권장 순서: 로컬 GPU → 로컬 CPU(small) → Groq v3 → Deepgram. 클라우드는 키가 생기면 웹 콘솔의 STT 체인에 끼워 넣는다. 지금은 꺼져 있다. 클라우드로 보내면 친구들 음성이 외부로 나가기 때문이다.</p>
+</section>
+
+<section id="sttbench">
+  <h2>받아쓰기 실측 — 보조 PC(GTX 1060, int8, beam 1, 디스코드 Opus 64kbps 왕복)</h2>
+  <table>
+    <tr><th>ID</th><th>데이터</th><th>설정</th><th>CER</th><th>지연 p50 (10초+)</th><th>호출어 오탐</th><th>판단</th></tr>
+    <tr><td>A</td><td>Zeroth 457</td><td>turbo, Opus 없음</td><td>5.23%</td><td>0.96s</td><td>0</td><td>기준</td></tr>
+    <tr><td>B2</td><td>Zeroth 457</td><td>turbo + Opus</td><td>6.07%</td><td>0.95s</td><td>0</td><td>코덱 손실 +0.8%p</td></tr>
+    <tr><td>C</td><td>Zeroth 457</td><td>turbo beam 5</td><td>5.61%</td><td>1.06s</td><td>0</td><td class="bad">느리고 부정확 → beam 1 유지</td></tr>
+    <tr><td>F</td><td>FLEURS 382</td><td>turbo + Opus</td><td><b>5.06%</b></td><td>0.94s</td><td>0</td><td class="ok">현재 운영 설정</td></tr>
+    <tr><td>H1</td><td>FLEURS 382</td><td>F + <code>hotwords="클짱 아짱"</code></td><td>4.92%</td><td>0.94s</td><td class="bad">4 / 382</td><td class="bad">오탐 → 안 씀</td></tr>
+    <tr><td>H2</td><td>FLEURS 앞 1초만</td><td>F(잘린 음성)</td><td>—</td><td>—</td><td id="h2fw">0</td><td>오탐 기준선</td></tr>
+    <tr><td>H3</td><td>FLEURS 앞 1초만</td><td>H2 + hotwords</td><td>—</td><td>—</td><td id="h3fw" class="bad"><b>271 / 382</b></td><td id="h3v" class="bad">잘린 음성의 71%를 "아짱"으로 지어냄 → 절대 안 씀</td></tr>
+    <tr><td>G1</td><td>FLEURS 382</td><td>ghost613 turbo-korean + Opus</td><td id="g1cer" class="bad"><b>12.57%</b></td><td id="g1lat">0.93s</td><td id="g1fw">0</td><td id="g1v" class="bad">Zeroth에 과적합 — 2.5배 나쁨 → 안 씀</td></tr>
+  </table>
+  <p class="dim">공개 데이터는 낭독체라 실제 게임 잡담보다 쉽다. 자발 발화(KsponSpeech)에서 Whisper는 CER이 약 14.7%까지 오른다 <span class="tag src2">2차</span>. 결론은 디스코드 실녹음 30~50문장(호출어 포함)으로 내야 한다(SPEC N-03, PoC 3).</p>
+  <h3>faster-whisper 설정 (운영값과 근거)</h3>
+  <table>
+    <tr><th>항목</th><th>운영값</th><th>근거</th></tr>
+    <tr><td>beam_size</td><td>1</td><td>실측 C: beam 5가 더 느리고 CER도 높음</td></tr>
+    <tr><td>condition_on_previous_text</td><td>False</td><td>조각이 서로 독립. 반복 환각이 번지지 않게</td></tr>
+    <tr><td>vad_filter</td><td>False</td><td>봇이 사람별 VAD로 이미 잘라 보낸다(침묵 600ms)</td></tr>
+    <tr><td>initial_prompt / hotwords</td><td>안 씀</td><td>실측 PoC 2(2% 오탐), H1(문장 382개 중 4건), H3(1초 조각 382개 중 271건)</td></tr>
+    <tr><td>환각 거르기</td><td>no_speech &gt; 0.6 이면서 logprob &lt; −1.0, 상투 문구 목록</td><td>리서치 권장과 같은 기준</td></tr>
+  </table>
+</section>
+
+<section id="wake">
+  <h2>호출어 인식</h2>
+  <div class="card">
+    <ul>
+      <li><b>변형 목록 확장</b>(config 반영):
+        <ul>
+          <li>클짱: 클장·크짱·크장·끌짱·클쨩·<b>글짱·클잔·클짠·큰짱</b></li>
+          <li>아짱: 아장·아쨩·<b>앗짱·아짠</b></li>
+        </ul>
+      </li>
+      <li><b>띄어쓴 형태는 무시</b>: 이름 앞에 글자가 붙으면 호출로 보지 않는다. 그래서 "아 장난"은 호출로 잡히지 않는다.</li>
+      <li><b>"헤이 클짱"도 된다</b>(2026-10-14): 받아쓰기가 "헤이클짱"·"헤이, 클짱"처럼 붙이거나 문장부호를 넣어도 걸린다(헤이·해이·에이·Hey). 이름만 짧게 부르면 앞이 잘려 인식이 나쁠 수 있어, 그럴 땐 헤이를 붙이길 권한다.</li>
+      <li><b>서버별 "헤이만" 옵션</b>: <code>/설정 호출방식 헤이만</code>(웹 콘솔 "이 서버 → 부르는 방식")이면 헤이를 붙인 호출만 받는다. 대화 중에 이름이 나와도 대답하지 않게 된다. 기본은 "이름"(둘 다 받음).</li>
+      <li><b>자모 단위 퍼지 매칭은 보류</b>: 리서치는 편집거리 1~2의 자모 매칭을 권한다. 다만 오탐(유료 호출)이 늘 수 있어 실녹음 측정 뒤에 정한다.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="cmd">
+  <h2>명령어 — 권한과 자동완성</h2>
+  <table>
+    <tr><th>명령</th><th>권한</th><th>자동완성·선택지</th></tr>
+    <tr><td><code>/들어와</code> <code>/나가</code> <code>/잊어줘</code></td><td>누구나</td><td>—</td></tr>
+    <tr><td><code>/무시해줘</code> <code>/다시들어줘</code></td><td>본인</td><td>—</td></tr>
+    <tr><td><code>/상태</code> <code>/설정 보기</code></td><td>누구나(답은 본인에게만)</td><td>—</td></tr>
+    <tr><td><code>/모델 캐릭터 프리셋</code></td><td>누구나 · 비싼 것과 학습 등급은 주인만</td><td>캐릭터: 선택지 / 프리셋: 자동완성(모델·무료/유료·주인 전용·키 없음 표시)</td></tr>
+    <tr><td><code>/설정 두뇌·대체두뇌</code></td><td>주인·서버 관리</td><td>프리셋 자동완성. 대체두뇌에만 "없음"</td></tr>
+    <tr><td><code>/설정 목소리</code></td><td>주인·서버 관리</td><td>edge-tts 한국어 음성 자동완성. 바꾸면 바로 들려줌</td></tr>
+    <tr><td><code>/설정 말투·채널·주인없으면·호출방식·음성대답·음량·인사말·기억시간·초기화</code> <code>/채널지정</code> <code>/무시목록 …</code></td><td>주인·서버 관리</td><td>채널·유저·역할은 디스코드 선택기</td></tr>
+    <tr><td><code>/설정 한도</code> <code>/공급자</code> <code>/설정다시읽기</code></td><td>주인</td><td>—</td></tr>
+  </table>
+  <p class="dim" id="reviewnote">권한은 Discord 설정이 아니라 봇이 명령을 받을 때 직접 확인한다. 그래서 명령 목록은 누구에게나 보인다. 서버 설정 → 연동에서 명령별로 역할·채널을 따로 제한할 수도 있다.</p>
+</section>
+
+<section id="todo">
+  <h2>남은 일</h2>
+  <table>
+    <tr><th>할 일</th><th>필요한 것</th></tr>
+    <tr><td>아짱(luna) 실측</td><td>원하면 <code>OPENAI_API_KEY</code>(Groq 키는 2026-10-14 등록·실측 완료). 넣는 법: <code>powershell -File deploy\set-key.ps1</code>(본인 PC 창에서)</td></tr>
+    <tr><td>실제 채널 호출→대답 20회(N-01)</td><td>음성 채널에서 "클짱, …"으로 불러 보기 — <code>/상태</code>와 웹 콘솔에 지연이 쌓인다</td></tr>
+    <tr><td>실녹음 받아쓰기·호출어(N-03·N-04)</td><td>동의받은 디스코드 잡담 30~50문장(호출어 포함)</td></tr>
+    <tr><td>클라우드 STT 대체</td><td>Groq 키가 등록돼 있어 STT 체인에 <code>groq-whisper</code>를 넣을 수 있음 — 넣을지 결정(음성이 외부로 나감)</td></tr>
+  </table>
+</section>
+
+<section id="src">
+  <h2>출처</h2>
+  <ul class="dim">
+    <li>Anthropic: <a href="https://docs.claude.com/en/docs/about-claude/pricing">pricing</a> · 보조 PC에서 <code>GET /v1/models</code> 직접 조회(2026-10-13)</li>
+    <li>OpenAI: <a href="https://developers.openai.com/api/docs/pricing">pricing</a> · <a href="https://developers.openai.com/api/docs/models/gpt-6-luna">gpt-6-luna</a> · <a href="https://developers.openai.com/api/docs/models/gpt-6-sol">gpt-6-sol</a> · <a href="https://developers.openai.com/api/docs/guides/latest-model">latest-model guide</a></li>
+    <li>Groq: <a href="https://console.groq.com/docs/models">models</a> · <a href="https://console.groq.com/docs/rate-limits">rate-limits</a> · <a href="https://console.groq.com/docs/deprecations">deprecations</a> · <a href="https://console.groq.com/docs/speech-to-text">speech-to-text</a> · <a href="https://klymentiev.com/blog/groq-pricing">Llama 무료 종료 정리</a></li>
+    <li>Gemini: <a href="https://ai.google.dev/gemini-api/docs/pricing">pricing</a> · <a href="https://discuss.ai.google.dev/t/gemini-3-8-flash-free-tier-20-rpd-is-too-limited-for-practical-evaluation/180609">무료 20 RPD 보고</a></li>
+    <li>기타 LLM: <a href="https://openrouter.ai/docs/api-reference/limits">OpenRouter limits</a> · <a href="https://help.mistral.ai/en/articles/455206-how-can-i-try-the-api-for-free-with-the-experiment-plan">Mistral Experiment</a> · <a href="https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models">GitHub Models</a> · <a href="https://benchlm.ai/md/free-tier/cerebras.md">Cerebras</a></li>
+    <li>STT: <a href="https://models.handy.computer/languages/ko">Handy ko leaderboard</a> · <a href="https://huggingface.co/Qwen/Qwen3-ASR-1.7B">Qwen3-ASR</a> · <a href="https://huggingface.co/ghost613/faster-whisper-large-v3-turbo-korean">ghost613 CT2</a> · <a href="https://huggingface.co/BuzzASR/korean">BuzzASR</a> · <a href="https://huggingface.co/moonshine-ai/moonshine-tiny-ko">moonshine-tiny-ko</a> · <a href="https://developers.deepgram.com/docs/models-languages-overview">Deepgram languages</a> · <a href="https://deepgram.com/pricing">Deepgram pricing</a> · <a href="https://azure.microsoft.com/en-us/pricing/details/speech/">Azure Speech</a> · <a href="https://elevenlabs.io/pricing/api">ElevenLabs</a> · <a href="https://developers.rtzr.ai/docs/pricing/">RTZR</a> · <a href="https://github.com/SYSTRAN/faster-whisper/blob/master/faster_whisper/transcribe.py">faster-whisper</a> · <a href="https://arxiv.org/pdf/2410.18444">arXiv 2410.18444</a></li>
+  </ul>
+</section>
+</main>
+<footer>discord-voice-assistant · 이 문서는 저장소 <code>docs/research-2026-10.html</code>. 실측 원자료: 두뇌 <code>poc/llm-latency/README.md</code>, 받아쓰기 <code>poc/stt-bench/README.md</code>(행별 결과는 보조 PC <code>C:\Users\macham\voice-poc\stt-bench\out\</code>).</footer>
+</body>
+</html>
