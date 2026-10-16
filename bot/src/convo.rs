@@ -39,6 +39,9 @@ pub struct SttEvent {
     pub chars: usize,
     /// 이 발화로 부른 캐릭터(질문 대기 포함)
     pub wake: Option<String>,
+    /// 기록 번호 — 판단 모델 결과를 이 줄에 적는다
+    #[serde(skip)]
+    pub id: u64,
 }
 
 /// 받아쓰기 기록은 최근 이만큼만
@@ -71,6 +74,7 @@ pub struct Buffer {
     lines: VecDeque<Line>,
     next_seq: u64,
     events: VecDeque<SttEvent>,
+    next_event: u64,
     traces: VecDeque<LlmTrace>,
 }
 
@@ -80,7 +84,8 @@ pub fn now_kst() -> String {
 }
 
 impl Buffer {
-    pub fn push(&mut self, user: u64, speaker: &str, text: &str) {
+    /// 줄 번호를 돌려준다
+    pub fn push(&mut self, user: u64, speaker: &str, text: &str) -> u64 {
         self.lines.push_back(Line {
             seq: self.next_seq,
             time: now_kst(),
@@ -90,11 +95,20 @@ impl Buffer {
             text: text.to_string(),
         });
         self.next_seq += 1;
+        self.next_seq - 1
+    }
+
+    /// 이 번호의 줄이 아직 있나 — 무시·잊어줘·주인 퇴장으로 지워졌으면 false
+    pub fn has_line(&self, seq: u64) -> bool {
+        self.lines.iter().any(|l| l.seq == seq)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn log_stt(&mut self, user: u64, speaker: &str, kind: &'static str, audio_ms: u64, stt_ms: u64, provider: &str, chars: usize, wake: Option<String>) {
+    pub fn log_stt(&mut self, user: u64, speaker: &str, kind: &'static str, audio_ms: u64, stt_ms: u64, provider: &str, chars: usize, wake: Option<String>) -> u64 {
+        self.next_event += 1;
+        let id = self.next_event;
         self.events.push_back(SttEvent {
+            id,
             time: now_kst(),
             at: Instant::now(),
             user,
@@ -108,6 +122,14 @@ impl Buffer {
         });
         while self.events.len() > MAX_EVENTS {
             self.events.pop_front();
+        }
+        id
+    }
+
+    /// 판단 모델 결과가 나오면 그 발화의 호출 표시를 바꾼다
+    pub fn update_wake(&mut self, id: u64, to: Option<String>) {
+        if let Some(e) = self.events.iter_mut().rev().find(|e| e.id == id) {
+            e.wake = to;
         }
     }
 
@@ -171,6 +193,8 @@ pub struct WakeHit {
     pub rest: String,
     /// 판정 근거 — 이름 / 헤이 / 비슷한 말 / 위험 별칭(받아쓰기 상황·지연 기록에 보여 준다)
     pub via: &'static str,
+    /// 호출어로 들린 부분(판단 모델에 같이 보낸다)
+    pub word: String,
 }
 
 pub struct Wake {
@@ -421,8 +445,8 @@ impl Wake {
                 }
             }
         }
-        let (_, end, k, via) = best?;
-        Some(WakeHit { character: k.clone(), rest: rest_after(text, end), via })
+        let (start, end, k, via) = best?;
+        Some(WakeHit { character: k.clone(), rest: rest_after(text, end), via, word: text[start..end].trim().to_string() })
     }
 }
 

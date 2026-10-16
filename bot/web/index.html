@@ -40,8 +40,10 @@
 <body>
 <div id="login" class="card" style="display:none">
   <h2>🎙️ 아짱·클짱 콘솔</h2>
-  <label>비밀번호</label><input id="pw" type="password" autocomplete="current-password">
-  <div style="margin-top:12px"><button class="b" onclick="login()">로그인</button></div>
+  <div id="loginDiscord" style="display:none"><a class="b" href="/auth/discord" style="display:inline-block;background:#5865f2;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none">디스코드로 로그인</a>
+    <p class="dim" style="font-size:12px">주인과 허용된 계정만 들어갈 수 있어요.</p></div>
+  <div id="loginPw" style="display:none"><label>비밀번호</label><input id="pw" type="password" autocomplete="current-password">
+  <div style="margin-top:12px"><button class="b" onclick="login()">로그인</button></div></div>
   <p id="loginErr" class="bad"></p>
 </div>
 
@@ -51,6 +53,7 @@
   <select id="guild" style="max-width:260px" onchange="selectGuild()"></select>
   <span class="sp"></span>
   <span id="hdrState" class="dim"></span>
+  <span id="hdrMe" class="dim" style="font-size:12px"></span>
   <button class="g" onclick="logout()">로그아웃</button>
 </header>
 <nav id="tabs">
@@ -71,7 +74,22 @@
     </div>
   </section>
 
-  <section id="t-chars"><div class="grid" id="charCards"></div></section>
+  <section id="t-chars"><div class="grid" id="charCards"></div>
+    <div class="card" id="newChar"><h2 id="ncTitle">➕ 캐릭터 추가 <span class="dim" style="font-size:12px">(모든 서버 공통 · 최대 25명 · 웹에서 추가한 캐릭터만 고치기·지우기)</span></h2>
+      <div class="grid" style="gap:8px">
+        <div><label>이름 (부를 때 쓰는 대표 이름)</label><input id="ncKey" maxlength="25" placeholder="예: 젬짱"></div>
+        <div><label>이모지 (음성 채널 이모지 호출에도 씀)</label><input id="ncEmoji" maxlength="8" placeholder="예: 💜"></div>
+        <div><label>두뇌</label><select id="ncBrain"></select></div>
+        <div><label>대체 두뇌</label><select id="ncFb"></select></div>
+      </div>
+      <label>호출어 (쉼표로 구분 · 첫 번째가 대표 이름 · 받아쓰기가 잘못 적는 변형도 같이)</label><input id="ncWake" placeholder="예: 젬짱, 잼짱, 젬장">
+      <label>기본 말투</label><select id="ncStyle"><option value="성격">성격 — 캐릭터 성격 그대로(반말)</option><option value="존댓말">존댓말 — 상냥한 해요체</option></select>
+      <label>성격 말투 (시스템 프롬프트 · 3000자)</label><textarea id="ncPersona" maxlength="3000" placeholder="너는 '젬짱'이다. 구글 Gemini를 귀엽게 의인화한 캐릭터로… (성격·말투·예시 대화·하지 말 것)"></textarea>
+      <label>존댓말 말투 (비우면 성격 말투 + "존댓말로" 지시)</label><textarea id="ncPolite" maxlength="3000" style="min-height:70px"></textarea>
+      <div class="row"><div><label>목소리 (edge-tts)</label><select id="ncVoice"></select></div><div><label>속도</label><input id="ncRate" value="+5%"></div><div><label>높낮이</label><input id="ncPitch" value="+10Hz"></div></div>
+      <div class="row" style="margin-top:12px"><button class="b" onclick="saveNewChar()">저장</button><button class="g" onclick="clearNewChar()">비우기</button><span></span></div>
+    </div>
+  </section>
 
   <section id="t-server">
     <div class="grid">
@@ -135,9 +153,20 @@
       <div class="card"><h2>키 등록 여부</h2><div id="keys"></div><p class="dim">키 값은 화면에 나오지 않아요. 바꾸려면 보조 PC의 <span class="mono">.env</span>를 고친 뒤 재시작.</p></div>
     </div>
     <div class="row" style="margin-bottom:14px"><button class="b" onclick="saveChains()">체인 저장</button><button class="g" onclick="resetChains()">config.toml 기본값으로</button><span></span></div>
+    <div class="card"><h2>판단 모델 <span class="dim" style="font-size:12px">(이름이 애매하게 들렸을 때 "정말 부른 말인가"를 무료 모델에 물어봄)</span></h2>
+      <div class="row"><div><label>켜기</label><select id="jdOn"><option value="true">켬</option><option value="false">끔</option></select></div>
+        <div><label>모델 (무료 프리셋만)</label><select id="jdPreset"></select></div>
+        <div><label>범위</label><select id="jdScope"><option value="애매할 때">애매할 때 — 비슷한 말·위험 별칭만</option><option value="이름도">이름도 — 헤이 없이 이름만 부른 것까지</option></select></div>
+        <div><label>기다릴 시간(ms)</label><input id="jdTimeout" type="number" min="300" max="10000" step="100"></div></div>
+      <div class="dim" style="font-size:12px">헤이를 붙인 호출·이어서 말하기·이모지 호출은 묻지 않아요. 모델이 늦거나 실패하면 원래 규칙대로 대답해요. 판단 결과는 대화 탭 받아쓰기 상황·호출별 지연에 보여요.</div>
+      <div class="row" style="margin-top:8px"><button class="b" onclick="saveJudge()">저장</button><button class="g" onclick="resetJudge()">config.toml 기본값으로</button><span></span></div>
+      <label style="margin-top:12px">시험 — 이 말이 캐릭터를 부른 것인지 물어보기(무료)</label>
+      <div class="row"><select id="jdChar" style="flex:0 0 120px"></select><input id="jdText" placeholder="예: 실장 회의 들어가셨대" maxlength="300"><button class="g" onclick="testJudge()">물어보기</button></div>
+      <textarea id="jdCtx" style="min-height:50px;margin-top:6px" placeholder="앞 대화(선택) — 줄마다 '이름: 말'"></textarea>
+      <div id="jdOut"></div></div>
     <div class="card"><h2>두뇌 프리셋</h2><table id="presetTbl"></table>
       <p class="dim" id="freeChain"></p>
-      <div class="row"><select id="llmChar" style="width:auto"></select><input id="llmQ" placeholder="시험 질문(비우면 기본 질문)" style="flex:1"><label style="width:auto"><input type="checkbox" id="llmFill" style="width:auto"> 긴 대화 기록 붙이기(캐시 확인)</label></div>
+      <div class="row"><select id="llmChar" style="width:auto"></select><select id="llmStyle" style="width:auto"><option value="">기본 말투</option><option>성격</option><option>존댓말</option></select><input id="llmQ" placeholder="시험 질문(비우면 기본 질문)" style="flex:1"><label style="width:auto"><input type="checkbox" id="llmFill" style="width:auto"> 긴 대화 기록 붙이기(캐시 확인)</label></div>
       <div id="llmOut"></div></div>
   </section>
 
@@ -175,7 +204,21 @@
 <div id="toast"></div>
 
 <script>
-let S = null, G = null, GD = null, PROV = null, VOICES = [];
+let S = null, G = null, GD = null, PROV = null, VOICES = [], TC_VOICES = null, AZ_VOICES = [];
+// 귀여운·듣기 좋은 목소리 빠른 설정(edge-tts, 무료) — 다국어 음성은 한국어를 읽지만 억양이 살짝 섞인다
+const VOICE_PRESETS = [
+  ['선희 기본', 'ko-KR-SunHiNeural', '+0%', '+0Hz'],
+  ['선희 귀엽게', 'ko-KR-SunHiNeural', '+8%', '+25Hz'],
+  ['선희 아기처럼', 'ko-KR-SunHiNeural', '+12%', '+38Hz'],
+  ['선희 차분하게', 'ko-KR-SunHiNeural', '-5%', '-5Hz'],
+  ['엠마 발랄(다국어)', 'en-US-EmmaMultilingualNeural', '+5%', '+12Hz'],
+  ['아바 상냥(다국어)', 'en-US-AvaMultilingualNeural', '+0%', '+8Hz'],
+  ['비비안(다국어)', 'fr-FR-VivienneMultilingualNeural', '+0%', '+10Hz'],
+  ['세라피나(다국어)', 'de-DE-SeraphinaMultilingualNeural', '+0%', '+5Hz'],
+  ['현수 남자', 'ko-KR-HyunsuMultilingualNeural', '+0%', '+0Hz'],
+];
+const voiceName = v => typeof v === 'string' ? v : v.name;
+const voiceLabel = v => typeof v === 'string' ? v : (v.label ? `${v.name} — ${v.label}` : v.name);
 const $ = id => document.getElementById(id);
 const val = id => $(id).value;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -193,7 +236,15 @@ async function api(path, opt = {}, quiet = false) {
 }
 const post = (p, b) => api(p, { method: 'POST', body: JSON.stringify(b || {}) });
 
-function showLogin() { $('login').style.display = 'block'; $('appView').style.display = 'none'; }
+async function showLogin() {
+  $('login').style.display = 'block'; $('appView').style.display = 'none';
+  try {
+    const i = await (await fetch('/api/login-info')).json();
+    $('loginDiscord').style.display = i.discord ? 'block' : 'none';
+    $('loginPw').style.display = i.password ? 'block' : 'none';
+    if (!i.discord && !i.password) $('loginErr').textContent = '로그인 방법이 준비되지 않았어요(.env의 DISCORD_CLIENT_SECRET 또는 CONSOLE_PASSWORD).';
+  } catch { $('loginPw').style.display = 'block'; }
+}
 async function login() {
   $('loginErr').textContent = '';
   const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: val('pw') }) });
@@ -212,6 +263,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
 async function boot() {
   try { S = await api('/api/status'); } catch { return; }
   $('appView').style.display = 'block';
+  $('hdrMe').textContent = S.me ? (S.me.id !== '0' ? '👤 ' + S.me.name : '🔑 비밀번호 로그인') : '';
   const sel = $('guild'); const prev = G;
   sel.innerHTML = S.guilds.map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
   G = prev && S.guilds.some(g => g.id === prev) ? prev : (S.sessions[0]?.guild || S.guilds[0]?.id);
@@ -256,7 +308,9 @@ async function selectGuild() {
   G = val('guild');
   renderStatus();
   GD = await api(`/api/guild/${G}`);
-  if (!VOICES.length) { try { VOICES = (await api('/api/voices')).voices.map(v => v.name); } catch {} }
+  if (!VOICES.length) { try { VOICES = (await api('/api/voices')).voices; } catch {} }
+  if (!TC_VOICES) { try { TC_VOICES = (await api('/api/voices?provider=typecast')).voices || []; } catch { TC_VOICES = []; } }
+  if (!AZ_VOICES.length) { try { AZ_VOICES = (await api('/api/voices?provider=azure-tts')).voices || []; } catch {} }
   renderChars(); renderServer(); renderOps();
 }
 
@@ -269,31 +323,88 @@ function renderChars() {
   $('charCards').innerHTML = CK.map((k, i) => {
     const c = GD.characters[k];
     const v = c.voice['edge-tts'] || { voice: '', rate: '+0%', pitch: '+0Hz' };
-    return `<div class="card"><h2>${esc(c.emoji)} ${esc(c.name)}</h2>
+    const tc = c.voice['typecast'] || { voice: '', rate: '+0%', pitch: '+0Hz' };
+    const az = c.voice['azure-tts'] || { voice: '', rate: '+0%', pitch: '+0Hz' };
+    const custom = !!GD.custom_characters?.[k];
+    const list = VOICES.length ? VOICES : [v.voice];
+    const known = list.some(x => voiceName(x) === v.voice);
+    return `<div class="card"><h2>${esc(c.emoji)} ${esc(c.name)} ${custom ? '<span class="pill">웹에서 추가</span>' : ''}</h2>
       <label>두뇌</label><select id="br-${i}">${presetOpts(c.brain)}</select>
       <label>대체 두뇌 (한도·실패 때)</label><select id="fb-${i}">${presetOpts(c.fallback || '', true)}</select>
+      <label>말투 고르기 (이 서버 · /설정 말투선택)</label>
+      <select id="st-${i}"><option value="성격" ${c.style !== '존댓말' ? 'selected' : ''}>성격 — 캐릭터 성격 그대로(반말)</option><option value="존댓말" ${c.style === '존댓말' ? 'selected' : ''}>존댓말 — 상냥한 해요체</option></select>
+      <label>목소리 빠른 설정 (무료 edge-tts)</label>
+      <div class="row">${VOICE_PRESETS.map((p, j) => `<button class="g" style="flex:0 0 auto;padding:3px 8px;font-size:12px" onclick="applyVoicePreset(${i},${j})">${esc(p[0])}</button>`).join('')}</div>
       <label>목소리 (edge-tts · azure-tts 공통)</label>
-      <select id="vo-${i}">${(VOICES.length ? VOICES : [v.voice]).map(n => `<option ${n === v.voice ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <select id="vo-${i}">${known ? '' : `<option selected>${esc(v.voice)}</option>`}${list.map(n => `<option value="${esc(voiceName(n))}" ${voiceName(n) === v.voice ? 'selected' : ''}>${esc(voiceLabel(n))}</option>`).join('')}</select>
       <div class="row"><div><label>속도</label><input id="ra-${i}" value="${esc(v.rate)}"></div><div><label>높낮이</label><input id="pi-${i}" value="${esc(v.pitch)}"></div></div>
-      <label>말투 (시스템 프롬프트)</label><textarea id="pe-${i}">${esc(c.persona)}</textarea>
-      <label>호출어 (기본, config.toml)</label><div class="dim">${c.wake.map(esc).join(', ')}</div>
+      <label>Azure 목소리 (AZURE_SPEECH_KEY가 있을 때 · edge에 없는 서현(아이)·지민·유진 등)</label>
+      <select id="az-${i}"><option value="">edge와 같게</option>${AZ_VOICES.map(x => `<option value="${esc(x.name)}" ${az.voice && x.name === az.voice && az.voice !== v.voice ? 'selected' : ''}>${esc(x.label ? x.name + ' — ' + x.label : x.name)}</option>`).join('')}${az.voice && az.voice !== v.voice && !AZ_VOICES.some(x => x.name === az.voice) ? `<option value="${esc(az.voice)}" selected>${esc(az.voice)}</option>` : ''}</select>
+      <label>Typecast 목소리 (쇼츠 캐릭터 목소리 · 유료 · 키가 있으면 이 목소리를 먼저 씀)</label>
+      ${TC_VOICES && TC_VOICES.length
+        ? `<select id="tc-${i}"><option value="">안 씀</option>${tc.voice && !TC_VOICES.some(x => x.name === tc.voice) ? `<option value="${esc(tc.voice)}" selected>${esc(tc.voice)} (목록에 없음)</option>` : ''}${TC_VOICES.map(x => `<option value="${esc(x.name)}" ${x.name === tc.voice ? 'selected' : ''}>${esc(x.label || x.name)}</option>`).join('')}</select>`
+        : `<input id="tc-${i}" value="${esc(tc.voice)}" placeholder="음성 ID (tc_…) — TYPECAST_API_KEY를 넣으면 목록이 떠요">`}
+      <details><summary class="dim" style="cursor:pointer;margin-top:8px">말투 글 고치기 (성격 · 존댓말)</summary>
+      <label>성격 말투 (시스템 프롬프트)</label><textarea id="pe-${i}">${esc(c.persona)}</textarea>
+      <label>존댓말 말투 (비우면 성격 말투 + "존댓말로" 지시)</label><textarea id="pp-${i}">${esc(c.persona_polite || '')}</textarea></details>
+      <label>호출어 (기본${custom ? '' : ', config.toml'})</label><div class="dim">${c.wake.map(esc).join(', ')}</div>
       <label>추가 호출어 — 부르는 이름(예: 클로드, 오케이 클짱)이나 받아쓰기가 적은 변형 (쉼표로 구분, 모든 서버 공통, /설정 호출어)</label>
       <div class="row"><input id="wx-${i}" value="${esc((GD.wake_extra?.[k] || []).join(', '))}" placeholder="예: 클로드, 클잖, 야쩡"></div>
       <label>위험 별칭 — 평소에도 쓰는 말로 받아써진 이름(예: 실장, 약정). 헤이·"실장아"·맨 앞에서 묻는 말일 때만 호출</label>
       <div class="row"><input id="wr-${i}" value="${esc((GD.wake_risky?.[k] || []).join(', '))}" placeholder="예: 실장, 약정"><button class="g" onclick="saveWake(${i})">호출어 저장</button></div>
       <div class="dim" style="font-size:12px">"헤이 ○○"처럼 헤이 바로 뒤에 오는 말은 이름과 비슷하기만 해도 호출로 봐요(받아쓰기 상황에서 확인).</div>
-      <div class="row" style="margin-top:12px"><button class="b" onclick="saveChar(${i})">저장</button><button class="g" onclick="preview(${i})">▶ 미리 듣기</button><button class="g" onclick="resetChar(${i})">기본값</button><span></span></div>
+      <div class="row" style="margin-top:12px"><button class="b" onclick="saveChar(${i})">저장</button><button class="g" onclick="preview(${i})">▶ 미리 듣기</button><button class="g" onclick="resetChar(${i})">이 서버 설정 초기화</button>${custom ? `<button class="g" onclick="editNewChar(${i})">이름·호출어 고치기</button><button class="r" onclick="deleteChar(${i})">캐릭터 삭제</button>` : ''}<span></span></div>
     </div>`;
   }).join('');
+  $('ncBrain').innerHTML = presetOpts('haiku'); $('ncFb').innerHTML = presetOpts('groq-free', true);
+  if (!$('ncVoice').options.length) $('ncVoice').innerHTML = (VOICES.length ? VOICES : ['ko-KR-SunHiNeural']).map(n => `<option value="${esc(voiceName(n))}">${esc(voiceLabel(n))}</option>`).join('');
+}
+function applyVoicePreset(i, j) {
+  const [, voice, rate, pitch] = VOICE_PRESETS[j];
+  const sel = $('vo-' + i);
+  if (![...sel.options].some(o => o.value === voice)) sel.insertAdjacentHTML('beforeend', `<option value="${esc(voice)}">${esc(voice)}</option>`);
+  sel.value = voice; $('ra-' + i).value = rate; $('pi-' + i).value = pitch;
+  preview(i, 'edge-tts');
+}
+function editNewChar(i) {
+  const k = CK[i], c = GD.custom_characters[k]; if (!c) return;
+  $('ncKey').value = k; $('ncEmoji').value = c.emoji || ''; $('ncWake').value = c.wake.join(', ');
+  $('ncBrain').value = c.brain; $('ncFb').value = c.fallback || ''; $('ncStyle').value = c.style || '성격';
+  $('ncPersona').value = c.persona; $('ncPolite').value = c.persona_polite || '';
+  const v = c.voice?.['edge-tts']; if (v) { $('ncVoice').value = v.voice; $('ncRate').value = v.rate; $('ncPitch').value = v.pitch; }
+  $('ncTitle').firstChild.textContent = `✏️ ${k} 고치기 `; $('newChar').scrollIntoView({ behavior: 'smooth' });
+}
+function clearNewChar() {
+  for (const id of ['ncKey', 'ncEmoji', 'ncWake', 'ncPersona', 'ncPolite']) $(id).value = '';
+  $('ncTitle').firstChild.textContent = '➕ 캐릭터 추가 ';
+}
+async function saveNewChar() {
+  const key = val('ncKey').trim(); if (!key) return toast('이름을 써 주세요', true);
+  const wake = val('ncWake').split(/[,，]+/).map(s => s.trim()).filter(Boolean);
+  if (!wake.includes(key)) wake.unshift(key);
+  const ev = { voice: val('ncVoice'), rate: val('ncRate') || '+0%', pitch: val('ncPitch') || '+0Hz' };
+  const r = await post('/api/characters', { key, name: key, emoji: val('ncEmoji'), wake, brain: val('ncBrain'), fallback: val('ncFb'), style: val('ncStyle'), persona: val('ncPersona'), persona_polite: val('ncPolite'), voice: { 'edge-tts': ev, 'azure-tts': ev } });
+  toast(r.new ? `${key} 추가됨 — 디스코드에서 바로 부를 수 있어요` : `${key} 고침`); clearNewChar();
+  GD = await api(`/api/guild/${G}`); renderChars();
+}
+async function deleteChar(i) {
+  const k = CK[i]; if (!confirmBox(`${k} 캐릭터를 지울까요? (모든 서버에서 사라져요)`)) return;
+  await post(`/api/characters/${encodeURIComponent(k)}/delete`); toast(`${k} 삭제`); GD = await api(`/api/guild/${G}`); renderChars();
 }
 function voicePatch(i) {
   const c = GD.characters[CK[i]]; const voice = { ...c.voice };
   const nv = { voice: val('vo-' + i), rate: val('ra-' + i) || '+0%', pitch: val('pi-' + i) || '+0Hz' };
-  voice['edge-tts'] = nv; voice['azure-tts'] = nv; return voice;
+  voice['edge-tts'] = nv;
+  // Azure는 따로 고른 게 있으면 그것(속도·높낮이는 같이), 없으면 edge와 같게
+  const azv = val('az-' + i);
+  voice['azure-tts'] = azv ? { voice: azv, rate: nv.rate, pitch: nv.pitch } : nv;
+  const tc = val('tc-' + i).trim();
+  if (tc) voice['typecast'] = { voice: tc, rate: '+0%', pitch: '+0Hz' }; else delete voice['typecast'];
+  return voice;
 }
 async function saveChar(i) {
   const k = CK[i];
-  await post(`/api/guild/${G}/character/${encodeURIComponent(k)}`, { brain: val('br-' + i), fallback: val('fb-' + i), persona: val('pe-' + i), voice: voicePatch(i) });
+  await post(`/api/guild/${G}/character/${encodeURIComponent(k)}`, { brain: val('br-' + i), fallback: val('fb-' + i), persona: val('pe-' + i), persona_polite: val('pp-' + i), style: val('st-' + i), voice: voicePatch(i) });
   toast(`${k} 저장됨`); GD = await api(`/api/guild/${G}`);
 }
 async function saveWake(i) {
@@ -302,11 +413,11 @@ async function saveWake(i) {
   const r = await post('/api/wake', { character: k, words: split('wx-' + i), risky: split('wr-' + i) });
   toast(`${k} 호출어 저장 (추가 ${r.words.length}개 · 위험 ${r.risky.length}개)`); GD = await api(`/api/guild/${G}`); renderChars();
 }
-async function resetChar(i) { const k = CK[i]; if (!confirmBox(`${k} 설정을 config.toml 기본값으로 돌릴까요?`)) return; await post(`/api/guild/${G}/character/${encodeURIComponent(k)}`, { reset: true }); GD = await api(`/api/guild/${G}`); renderChars(); toast('기본값으로'); }
-async function preview(i) {
+async function resetChar(i) { const k = CK[i]; if (!confirmBox(`${k}의 이 서버 설정(두뇌·말투·목소리)을 기본값으로 돌릴까요?`)) return; await post(`/api/guild/${G}/character/${encodeURIComponent(k)}`, { reset: true }); GD = await api(`/api/guild/${G}`); renderChars(); toast('기본값으로'); }
+async function preview(i, only) {
   const k = CK[i];
-  // 저장하지 않고 지금 고른 목소리로만 들어 본다(마음에 들면 "저장")
-  const r = await api('/api/tts-preview', { method: 'POST', body: JSON.stringify({ character: k, guild: G, voice: voicePatch(i) }) });
+  // 저장하지 않고 지금 고른 목소리로만 들어 본다(마음에 들면 "저장"). only면 그 공급자로만(빠른 설정 = 무료 edge)
+  const r = await api('/api/tts-preview', { method: 'POST', body: JSON.stringify({ character: k, guild: G, voice: voicePatch(i), only: only || null }) });
   const blob = await r.blob(); new Audio(URL.createObjectURL(blob)).play();
   toast(`미리 듣기 (${r.headers.get('x-provider')})`);
 }
@@ -377,6 +488,26 @@ async function loadProv() {
      <td><input type="checkbox" style="width:auto" ${p.disabled ? '' : 'checked'} onchange="togglePreset(${jsq(k)}, !this.checked)"></td>
      <td><button class="g" ${p.has_key ? '' : 'disabled'} onclick="llmTest(${jsq(k)}, ${p.free ? 'true' : 'false'})">시험</button></td></tr>`).join('');
   $('freeChain').textContent = '무료 대체 체인(두뇌·대체 두뇌가 다 실패하면): ' + (PROV.free_chain.length ? PROV.free_chain.join(' → ') : '없음');
+  loadJudge();
+}
+async function loadJudge() {
+  const r = await api('/api/judge'); const j = r.judge;
+  $('jdOn').value = String(j.on); $('jdScope').value = j.scope; $('jdTimeout').value = j.timeout_ms;
+  $('jdPreset').innerHTML = r.presets.map(p => `<option value="${esc(p.name)}" ${p.name === j.preset ? 'selected' : ''}>${esc(p.name)} — ${esc(p.model)}${p.has_key ? '' : ' (키 없음)'}</option>`).join('');
+  $('jdChar').innerHTML = Object.keys(GD?.characters || {}).map(k => `<option>${esc(k)}</option>`).join('');
+}
+async function saveJudge() {
+  await post('/api/judge', { judge: { on: val('jdOn') === 'true', preset: val('jdPreset'), scope: val('jdScope'), timeout_ms: Math.round(+val('jdTimeout') || 2500) } });
+  toast('판단 모델 저장'); loadJudge();
+}
+async function resetJudge() { await post('/api/judge', { reset: true }); toast('기본값으로'); loadJudge(); }
+async function testJudge() {
+  $('jdOut').innerHTML = '<p class="dim">물어보는 중…</p>';
+  try {
+    const r = await post('/api/judge-test', { character: val('jdChar'), text: val('jdText'), context: val('jdCtx') });
+    const rule = r.rule ? `규칙 판정: ${esc(r.rule.character)}(${esc(r.rule.via)}, "${esc(r.rule.word)}")` : '규칙 판정: 호출 아님';
+    $('jdOut').innerHTML = `<p>${r.call ? '<span class="ok">📣 부른 것</span>' : '<span class="warn">🙅 부른 게 아님</span>'} · ${esc(r.ms)}ms · <span class="mono">${esc(r.preset)}</span> · 답 "${esc(r.raw)}"<br><span class="dim">${rule}</span></p>`;
+  } catch (e) { $('jdOut').innerHTML = `<p class="bad">${esc(String(e.message || e))}</p>`; }
 }
 function renderChains() {
   for (const kind of ['stt', 'tts']) {
@@ -397,7 +528,7 @@ async function llmTest(k, free) {
   if (!free && !confirmBox(`${k}는 유료예요. 한 번 불러 볼까요? (하루 한도에 잡혀요)`)) return;
   $('llmOut').innerHTML = `<p class="dim">${esc(k)} 부르는 중…</p>`;
   try {
-    const r = await post('/api/llm-test', { preset: k, question: val('llmQ'), fill: $('llmFill').checked, character: val('llmChar') || null });
+    const r = await post('/api/llm-test', { preset: k, question: val('llmQ'), fill: $('llmFill').checked, character: val('llmChar') || null, style: val('llmStyle') || null });
     const t = r.tokens;
     $('llmOut').innerHTML = `<p><b class="mono">${esc(r.preset)}</b> 말 도착 ${r.speech_ms ?? '-'}ms · 전체 ${r.ms}ms · $${r.usd.toFixed(5)} · 입력 ${t.input} 출력 ${t.output} 캐시읽기 ${t.cache_read} 캐시쓰기 ${t.cache_write} · 형식 ${r.format_ok ? '<span class="ok">정상</span>' : '<span class="bad">어긋남</span>'}</p>
       <p>🔊 ${esc(r.speech)}</p><pre style="white-space:pre-wrap">${esc(r.text)}</pre>`;
@@ -419,11 +550,12 @@ async function loadBuffer(quiet = false) {
   $('sttHead').innerHTML = `<p>${r.sidecar_ok ? '<span class="ok">받아쓰기 서버 정상</span>' : '<span class="bad">받아쓰기 서버 꺼짐</span>'} · ${st ? (r.listening ? '<span class="ok">듣는 중</span>' : '<span class="warn">음성 채널엔 있지만 안 들음(주인 없음 등)</span>') : '<span class="dim">음성 채널에 없음</span>'}
     · 체인 <span class="mono">${esc(r.stt_chain.join(' → '))}</span> · 마지막 사용 <span class="mono">${esc(r.stt_last || '-')}</span>
     ${st ? `<br>발화 ${esc(st.utterances)} · 잡음 버림 ${esc(st.dropped_noise)}(짧음 ${esc(st.dropped_short)} · 작음 ${esc(st.dropped_quiet)} · 대기열 ${esc(st.dropped_queue)}) · 환각 거름 ${esc(st.stt_filtered)} · 실패 ${esc(st.stt_failed)} · 호출 ${esc(st.wakes)} · 대답 ${esc(st.answers)}
+      ${(st.judge_yes || st.judge_no || st.judge_fail) ? `<br>판단 모델: 부름 ${esc(st.judge_yes)} · 아님 ${esc(st.judge_no)} · 실패 ${esc(st.judge_fail)}` : ''}
       <br><span class="dim">수신 진단: 소리 묶음 ${esc(st.rx_frames)} · 누구인지 모름 ${esc(st.rx_unknown)} · 걸러짐(무시·안 들음) ${esc(st.rx_blocked)}${st.rx_frames === 0 ? ' — <span class="warn">디스코드에서 소리가 전혀 안 들어오고 있어요</span>' : ''}</span>` : ''}</p>`;
   const tls = r.timelines || [];
   $('tlLog').innerHTML = tls.length
-    ? `<tr><th>시각</th><th>캐릭터</th><th>판정</th><th>받아쓰기 대기</th><th>받아쓰기</th><th>대답 대기</th><th>두뇌 첫 문장</th><th>두뇌 전체</th><th>TTS</th><th>재생 대기</th><th>첫 소리</th><th>두뇌</th><th>결과</th></tr>` + tls.map(t =>
-        `<tr><td class="dim">${esc(t.time)}</td><td>${esc(t.character)}</td><td>${esc(t.via)}</td><td>${esc(t.stt_wait_ms)}</td><td>${esc(t.stt_ms)}</td><td>${esc(t.answer_wait_ms)}</td><td>${esc(t.llm_speech_ms ?? '-')}</td><td>${esc(t.llm_ms)}</td><td>${esc(t.tts_ms)}</td><td>${esc(t.play_wait_ms)}</td><td class="${t.total_ms > 5000 ? 'bad' : t.total_ms > 3500 ? 'warn' : 'ok'}"><b>${t.total_ms ? esc(t.total_ms) : '-'}</b></td><td class="mono">${esc(t.preset)}</td><td>${esc(t.result)}</td></tr>`).join('')
+    ? `<tr><th>시각</th><th>캐릭터</th><th>판정</th><th>받아쓰기 대기</th><th>받아쓰기</th><th>판단</th><th>대답 대기</th><th>두뇌 첫 문장</th><th>두뇌 전체</th><th>TTS</th><th>재생 대기</th><th>첫 소리</th><th>두뇌</th><th>결과</th></tr>` + tls.map(t =>
+        `<tr><td class="dim">${esc(t.time)}</td><td>${esc(t.character)}</td><td>${esc(t.via)}</td><td>${esc(t.stt_wait_ms)}</td><td>${esc(t.stt_ms)}</td><td>${esc(t.judge_ms ?? '-')}</td><td>${esc(t.answer_wait_ms)}</td><td>${esc(t.llm_speech_ms ?? '-')}</td><td>${esc(t.llm_ms)}</td><td>${esc(t.tts_ms)}</td><td>${esc(t.play_wait_ms)}</td><td class="${t.total_ms > 5000 ? 'bad' : t.total_ms > 3500 ? 'warn' : 'ok'}"><b>${t.total_ms ? esc(t.total_ms) : '-'}</b></td><td class="mono">${esc(t.preset)}</td><td>${esc(t.result)}</td></tr>`).join('')
     : '<tr><td class="dim">아직 호출이 없어요</td></tr>';
   $('sttLog').innerHTML = r.events.length
     ? `<tr><th>시각</th><th>누가</th><th>결과</th><th>말 길이</th><th>받아쓰기</th><th>공급자</th><th>글자</th><th>호출</th></tr>` + r.events.map(e => {

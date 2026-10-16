@@ -19,13 +19,17 @@ const COLOR: u32 = 0xD97757;
 
 // ------------------------------------------------------------------ 등록
 
-fn char_opt(app: &AppRef) -> CreateCommandOption {
-    let mut o = CreateCommandOption::new(CommandOptionType::String, "캐릭터", "아짱 또는 클짱").required(true);
-    for k in app.cfg().characters.keys() {
-        o = o.add_string_choice(k, k);
-    }
-    o
+/// 캐릭터는 자동완성으로 — 웹 콘솔에서 캐릭터를 더하거나 빼도 명령을 다시 등록할 필요가 없다
+fn char_opt(_app: &AppRef) -> CreateCommandOption {
+    CreateCommandOption::new(CommandOptionType::String, "캐릭터", "캐릭터(입력하면 목록이 뜸)").required(true).set_autocomplete(true)
 }
+
+/// 고른 캐릭터가 지금 있는지 — 자동완성이라 아무 글자나 들어올 수 있다
+fn known_char(app: &AppRef, ch: &str) -> bool {
+    app.cfg().characters.contains_key(ch)
+}
+
+const NO_CHAR: &str = "그런 캐릭터가 없어요. 목록에서 골라 주세요.";
 
 fn sub(name: &str, desc: &str) -> CreateCommandOption {
     CreateCommandOption::new(CommandOptionType::SubCommand, name, desc)
@@ -103,7 +107,17 @@ pub fn definitions(app: &AppRef) -> Vec<CreateCommand> {
                     ),
             )
             .add_option(
-                sub("말투", "캐릭터 말투(시스템 프롬프트)")
+                sub("말투선택", "캐릭터 말투 고르기 — 성격 있는 반말 / 공손한 존댓말")
+                    .add_sub_option(char_opt(app))
+                    .add_sub_option(
+                        CreateCommandOption::new(CommandOptionType::String, "말투", "어떤 말투로 대답할지")
+                            .add_string_choice("성격 (캐릭터 성격 그대로, 반말)", "성격")
+                            .add_string_choice("존댓말 (상냥한 해요체)", "존댓말")
+                            .required(true),
+                    ),
+            )
+            .add_option(
+                sub("말투", "캐릭터 말투 직접 쓰기(시스템 프롬프트 — 성격 말투에 적용)")
                     .add_sub_option(char_opt(app))
                     .add_sub_option(CreateCommandOption::new(CommandOptionType::String, "내용", "비우면 기본값으로").max_length(3000)),
             )
@@ -336,6 +350,7 @@ pub async fn handle(app: &AppRef, ctx: &Context, cmd: &CommandInteraction) {
             let s = app.sessions.lock().await.get(&g).cloned();
             if let Some(s) = s {
                 s.buffer.lock().unwrap().remove_user(u); // SPEC F-11: 즉시 버퍼에서도 지움
+                s.forget_calls(u);
                 s.reset_allowed();
             }
             reply(ctx, cmd, "🙈 이제 당신 목소리는 듣지 않아요. 기억해 둔 말도 지웠어요. `/다시들어줘`로 되돌릴 수 있어요.", true).await;
@@ -357,6 +372,7 @@ pub async fn handle(app: &AppRef, ctx: &Context, cmd: &CommandInteraction) {
             let s = app.sessions.lock().await.get(&g).cloned();
             if let Some(s) = s {
                 s.buffer.lock().unwrap().clear();
+                s.forget_all_calls();
             }
             reply(ctx, cmd, "🧹 기억한 대화를 전부 지웠어요.", false).await;
         }
@@ -446,6 +462,9 @@ async fn set_brain(app: &AppRef, ctx: &Context, cmd: &CommandInteraction, g: u64
     let (Some(ch), Some(p)) = (opt_str(opts, "캐릭터"), opt_str(opts, "프리셋")) else {
         return reply(ctx, cmd, "캐릭터와 프리셋을 골라 주세요.", true).await;
     };
+    if !known_char(app, ch) {
+        return reply(ctx, cmd, NO_CHAR, true).await;
+    }
     // 두뇌 자체는 누구나(F-30), 대체 두뇌는 관리 권한
     if fallback && !can_manage(app, cmd) {
         return reply(ctx, cmd, NO_PERM, true).await;
@@ -479,6 +498,8 @@ async fn ignore_cmd(app: &AppRef, ctx: &Context, cmd: &CommandInteraction, g: u6
     }
     // 유저 무시를 더하면 그 사람의 기존 대화·받아쓰기 기록·장기 기억도 지운다(SPEC F-10·F-11)
     let mut purge: Option<u64> = None;
+    // 역할 무시를 더하면 누가 그 역할인지 따지지 않고 이 서버의 호출 대기(다음 말·판단)를 모두 무효로 — 늦은 판단 결과가 적용되지 않게
+    let mut role_added = false;
     let msg = {
         let mut st = app.store.lock().unwrap();
         let gs = st.guild(g);
@@ -495,6 +516,7 @@ async fn ignore_cmd(app: &AppRef, ctx: &Context, cmd: &CommandInteraction, g: u6
             }
             ("역할추가", Some(ResolvedValue::Role(r))) => {
                 gs.ignore_roles.insert(r.id.get());
+                role_added = true;
                 format!("🔇 역할 <@&{}> 가진 사람은 전부 무시할게요.", r.id)
             }
             ("역할삭제", Some(ResolvedValue::Role(r))) => {
@@ -523,6 +545,10 @@ async fn ignore_cmd(app: &AppRef, ctx: &Context, cmd: &CommandInteraction, g: u6
         s.reset_allowed();
         if let Some(u) = purge {
             s.buffer.lock().unwrap().remove_user(u);
+            s.forget_calls(u);
+        }
+        if role_added {
+            s.forget_all_calls();
         }
     }
     let msg = CreateInteractionResponseMessage::new()
@@ -570,7 +596,22 @@ async fn settings_cmd(app: &AppRef, ctx: &Context, cmd: &CommandInteraction, gui
     if !can_manage(app, cmd) {
         return reply(ctx, cmd, NO_PERM, true).await;
     }
+    // 캐릭터를 받는 설정은 먼저 있는 캐릭터인지 본다
+    if let Some(ch) = opt_str(sub, "캐릭터") {
+        if !known_char(app, ch) {
+            return reply(ctx, cmd, NO_CHAR, true).await;
+        }
+    }
     let msg = match name {
+        "말투선택" => {
+            let (Some(ch), Some(style)) = (opt_str(sub, "캐릭터"), opt_str(sub, "말투")) else { return reply(ctx, cmd, BAD_OPT, true).await };
+            if !crate::config::STYLES.contains(&style) {
+                return reply(ctx, cmd, BAD_OPT, true).await;
+            }
+            app.store.lock().unwrap().guild(g).characters.entry(ch.to_string()).or_default().style = Some(style.to_string());
+            app.save_store();
+            if style == "존댓말" { format!("🎀 {ch}는 이제 상냥한 존댓말로 대답해요.") } else { format!("😼 {ch}는 이제 성격 그대로(반말) 대답해요.") }
+        }
         "목소리" => {
             let (Some(ch), Some(v)) = (opt_str(sub, "캐릭터"), opt_str(sub, "목소리")) else {
                 return reply(ctx, cmd, BAD_OPT, true).await;
@@ -726,16 +767,17 @@ pub fn settings_embed(app: &AppRef, guild: GuildId) -> CreateEmbed {
         let Some(c) = app.character(g, k) else { continue };
         let v = c.voice.get("edge-tts").cloned().unwrap_or_default();
         let fb = c.fallback.as_deref().map(|f| preset_label(app, f)).unwrap_or("없음".into());
-        let persona: String = c.persona.chars().take(60).collect();
+        let persona: String = c.active_persona().chars().take(60).collect();
         e = e.field(
             format!("{} {}", c.emoji, c.name),
             fit(&format!(
-                "두뇌 {}\n대체 {}\n목소리 `{}` {} {}\n말투 {}…",
+                "두뇌 {}\n대체 {}\n목소리 `{}` {} {}\n말투 {} · {}…",
                 preset_label(app, &c.brain),
                 fb,
                 if v.voice.is_empty() { "기본" } else { &v.voice },
                 v.rate,
                 v.pitch,
+                c.style,
                 persona.replace('\n', " ")
             ), 1024),
             true,
@@ -788,7 +830,7 @@ pub fn settings_embed(app: &AppRef, guild: GuildId) -> CreateEmbed {
         false,
     );
     e.footer(serenity::all::CreateEmbedFooter::new(
-        "바꾸기: /설정 두뇌·대체두뇌·목소리·말투·채널·한도·주인없으면·호출방식·음성대답·음량·인사말·기억시간·초기화 · 가격은 1M 토큰당 입력/출력 USD · /도움말",
+        "바꾸기: /설정 두뇌·대체두뇌·목소리·말투선택·말투·채널·한도·주인없으면·호출방식·음성대답·음량·인사말·기억시간·초기화 · 가격은 1M 토큰당 입력/출력 USD · /도움말",
     ))
 }
 
@@ -909,19 +951,21 @@ pub fn help_embed(app: &AppRef, hey_only: bool) -> CreateEmbed {
     let how = if hey_only {
         "\"헤이 클짱, 오늘 저녁 뭐 먹지?\"처럼 **헤이를 붙여** 부르면 대답해요(이 서버는 `/설정 호출방식` 헤이만)."
     } else {
-        "\"클짱, 오늘 저녁 뭐 먹지?\"처럼 이름을 부르면 대답해요. \"헤이 클짱\"도 돼요. 음성 채널에서 🧡(클짱)·🩵(아짱) 이모지 반응을 누르고 말해도 돼요."
+        "\"클짱, 오늘 저녁 뭐 먹지?\"처럼 이름을 부르면 대답해요. \"헤이 클짱\"도 돼요."
     };
+    let emojis: Vec<String> = cfg.characters.values().filter(|c| !c.emoji.is_empty()).map(|c| format!("{}({})", c.emoji, c.name)).collect();
+    let emoji_how = if emojis.is_empty() { String::new() } else { format!(" 음성 채널에서 {} 이모지 반응을 누르고 말해도 돼요.", emojis.join("·")) };
     CreateEmbed::new()
         .title("📖 아짱·클짱 쓰는 법")
         .color(COLOR)
         .description(format!(
-            "음성 채널에 들어가서 `/들어와` → {how}\n\
+            "음성 채널에 들어가서 `/들어와` → {how}{emoji_how}\n\
              음성으로는 짧게, 긴 답은 지정 채널에 부른 사람을 멘션해서 올려요. 이름만 부르고 멈추면 다음 말을 질문으로 들어요.\n\
              캐릭터: {}",
             names.join(" · ")
         ))
         .field("누구나", "`/들어와` `/나가` `/잊어줘` `/상태` `/설정 보기` `/도움말`\n`/무시해줘` `/다시들어줘` — 내 목소리 안 듣기·다시 듣기\n`/모델` — 캐릭터 두뇌 바꾸기(목록에서 고르기)\n`/기억 보기·지우기` — \"○○ 기억해\"로 남긴 장기 기억", false)
-        .field("주인·서버 관리", "`/설정 두뇌·대체두뇌·목소리·말투·채널·주인없으면·호출방식·음성대답·음량·인사말·기억시간·초기화`\n`/채널지정` `/무시목록 유저추가·역할추가·…·보기` `/기억 전부지우기`", false)
+        .field("주인·서버 관리", "`/설정 두뇌·대체두뇌·목소리·말투선택(성격/존댓말)·말투·채널·주인없으면·호출방식·음성대답·음량·인사말·기억시간·초기화`\n`/채널지정` `/무시목록 유저추가·역할추가·…·보기` `/기억 전부지우기`", false)
         .field("주인", "`/설정 한도` `/설정 호출어` `/공급자` `/설정다시읽기` · 웹 콘솔 voicebot.macham.net", false)
         .footer(serenity::all::CreateEmbedFooter::new("음성은 저장하지 않고, 받아쓴 글은 정해진 시간만 기억했다가 지워요."))
 }
@@ -974,6 +1018,13 @@ pub async fn autocomplete(app: &AppRef, ctx: &Context, ac: &CommandInteraction) 
     let typed = focused.value.to_lowercase();
     let mut choices: Vec<AutocompleteChoice> = vec![];
     match focused.name {
+        "캐릭터" => {
+            for (k, c) in &app.cfg().characters {
+                if typed.is_empty() || k.to_lowercase().contains(&typed) || c.name.to_lowercase().contains(&typed) {
+                    choices.push(AutocompleteChoice::new(fit(&format!("{} {}", c.emoji, c.name), 100), fit(k, 100)));
+                }
+            }
+        }
         "프리셋" => {
             let cfg = app.cfg();
             let owner = is_owner(app, ac);

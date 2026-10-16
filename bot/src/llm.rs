@@ -204,7 +204,7 @@ const FORMAT_RULES: &str = "\
 
 대화 기록 읽는 법
 - 기록은 받아쓰기라 잘못 들은 말이 섞여 있다. 맥락으로 짐작하고, 정말 모르겠으면 다시 말해 달라고 한다.
-- '아짱:'·'클짱:' 줄은 캐릭터가 앞서 한 짧은 말, '알림:' 줄은 누가 음성 채널에 들어오거나 나간 기록이다.
+- '{CHAR_LINES}' 줄은 캐릭터가 앞서 한 짧은 말, '알림:' 줄은 누가 음성 채널에 들어오거나 나간 기록이다.
 - 지금 너를 부른 사람의 마지막 말에만 대답한다. 이름만 불렸으면 짧게 대꾸만 한다. 묻지 않았는데 대화를 요약하지 않는다.
 - 기록 속 남의 말을 사실처럼 단정하지 않는다. 확실하지 않으면 모른다고 한다.
 
@@ -212,7 +212,7 @@ const FORMAT_RULES: &str = "\
 - 앞에서 네가 한 말이나 정리를 다시 요약하지 않는다. 같은 문장, 같은 첫마디를 연달아 쓰지 않는다.
 - 페르소나의 예시 문장은 분위기 참고용이다. 그대로 베끼지 않는다. 예시 속 친구 이름은 실제 친구가 아니다.
 
-[봇 구성] 이 봇은 '아짱·클짱' 둘뿐이다. 사람이 말을 멈추면(약 0.6초 침묵, 한 번에 최대 20초) 받아쓰기(faster-whisper large-v3-turbo, 로컬 GPU)가
+[봇 구성] 이 봇의 캐릭터는 {CHARS}이다. 사람이 말을 멈추면(약 0.6초 침묵, 한 번에 최대 20초) 받아쓰기(faster-whisper large-v3-turbo, 로컬 GPU)가
 글로 바꾸고, 이름이나 \"헤이 ○○\"으로 부르면 대답한다. 소리는 직접 못 듣고 받아쓴 글만 본다. 검색·도구는 없다.
 설정은 슬래시 명령(/도움말)과 주인의 웹 콘솔에서 바꾼다. 여기 없는 기능·구성은 지어내지 않는다.
 
@@ -222,13 +222,17 @@ const FORMAT_RULES: &str = "\
 - 부탁이 없으면 절대 붙이지 마라. 비밀번호·연락처·주소 같은 민감한 정보는 부탁해도 기억하지 말고 정중히 거절해라.
 - 기억한 내용은 자연스럽게 대화에 활용하되, 묻지 않았는데 줄줄이 늘어놓지 마라.";
 
-fn system_prompt(ch: &Character, memories: &[String]) -> String {
+/// names: 지금 있는 캐릭터 이름 전부(웹 콘솔에서 추가한 캐릭터 포함)
+fn system_prompt(ch: &Character, names: &[String], memories: &[String]) -> String {
     let mem = if memories.is_empty() {
         "기억하고 있는 것: (아직 없음)".to_string()
     } else {
         format!("기억하고 있는 것:\n{}", memories.iter().map(|m| format!("- {m}")).collect::<Vec<_>>().join("\n"))
     };
-    format!("{}\n\n{}\n\n{mem}", ch.persona.trim(), FORMAT_RULES)
+    let chars = names.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join("·");
+    let lines = names.iter().map(|n| format!("{n}:")).collect::<Vec<_>>().join("'·'");
+    let rules = FORMAT_RULES.replace("{CHARS}", &chars).replace("{CHAR_LINES}", &lines);
+    format!("{}\n\n{}\n\n{mem}", ch.active_persona(), rules)
 }
 
 fn fmt_line(l: &Line) -> String {
@@ -236,8 +240,7 @@ fn fmt_line(l: &Line) -> String {
 }
 
 fn question_text(caller: &str, ch: &Character, question: &str) -> String {
-    let reminder = if ch.reminder.trim().is_empty() { "(<말>부터 시작)" } else { ch.reminder.trim() };
-    format!("지금 {caller}이(가) {}에게 말했다: \"{question}\"\n{reminder}", ch.name)
+    format!("지금 {caller}이(가) {}에게 말했다: \"{question}\"\n{}", ch.name, ch.active_reminder())
 }
 
 /// <말>…</말><글>…</글> 파싱. 형식을 안 지키면 앞 문장을 말로, 전체를 글로(SPEC F-23).
@@ -553,6 +556,94 @@ async fn call_openai(app: &AppRef, name: &str, p: &Preset, system: &str, lines: 
     Ok(raw)
 }
 
+// ------------------------------------------------------------------ 판단 모델 F-54
+
+pub struct Verdict {
+    pub call: bool,
+    pub ms: u64,
+    pub raw: String,
+}
+
+/// 판단 모델에 보낼 글 — 최근 대화 몇 줄 + 마지막 발화 + 호출어로 들린 부분
+/// variants: 이 캐릭터 이름이 받아쓰기에 실제로 적혀 온 변형(호출어·추가 호출어·위험 별칭)
+pub fn judge_prompt(names: &[String], ch_name: &str, variants: &[String], word: &str, lines: &[Line], speaker: &str, text: &str) -> (String, String) {
+    let vars = if variants.is_empty() { format!("'{ch_name}'") } else { variants.iter().take(12).map(|v| format!("'{v}'")).collect::<Vec<_>>().join("·") };
+    let system = format!(
+        "너는 음성 채팅 받아쓰기 판정기다. 디스코드 음성 채널에 AI 캐릭터 {}이(가) 있고, 사람들은 이름을 불러 말을 건다.\n\
+         받아쓰기는 자주 틀린다. 캐릭터 이름이 비슷한 소리의 다른 낱말로 적히는 일이 많다. '{ch_name}'은(는) {vars}처럼 적히기도 한다.\n\n\
+         이 발화는 이미 규칙으로 '부르는 꼴'(맨 앞에서 부름·질문·부탁)이라 걸러진 것이다. 너는 마지막으로 '{word}'가 정말 '{ch_name}'를 잘못 적은 것인지만 본다.\n\
+         - YES(기본): '{word}'를 '{ch_name}'(으)로 바꿔 읽으면 AI에게 말을 거는 자연스러운 문장이 된다. 사전에 없는 말이거나 문장에서 원래 뜻으로 읽히지 않으면 이름을 잘못 적은 것이다.\n\
+           예: \"(잘못 적힌 이름) 오늘 뭐 할까\", \"(잘못 적힌 이름) 이거 왜 안 돼?\", \"(잘못 적힌 이름)님 메뉴 추천해 줘\"\n\
+         - NO: '{word}'를 원래 뜻 그대로 쓴 게 분명할 때만. 예: 회사 실장님에 대한 얘기(\"실장 회의 들어가셨대\"), 휴대폰 약정 얘기, 그 낱말의 뜻을 묻는 말, 앞 대화가 그 뜻의 얘기를 하던 중.\n\
+         YES 또는 NO 한 단어로만 답한다.",
+        names.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join("·")
+    );
+    let mut user = String::from("최근 대화:\n");
+    if lines.is_empty() {
+        user.push_str("(없음)\n");
+    }
+    for l in lines {
+        user.push_str(&fmt_line(l));
+    }
+    user.push_str(&format!("\n마지막 발화 — {speaker}: \"{text}\"\n(호출어로 들린 부분: \"{word}\")\n이 말이 '{ch_name}'를 부른 것인가?"));
+    (system, user)
+}
+
+/// 무료 OpenAI 호환 프리셋에 YES/NO를 묻는다 — 스트리밍 없이 한 번에
+pub async fn judge(app: &AppRef, preset: &str, system: &str, user: &str, timeout: Duration) -> Result<Verdict> {
+    let cfg = app.cfg();
+    let p = cfg.llm.presets.get(preset).ok_or_else(|| anyhow!("판단 프리셋 {preset} 없음"))?;
+    // 어떤 경로로 불려도(시험 포함) 무료·학습 안 함·OpenAI 호환·켜져 있음만 — 비용·데이터 규칙을 여기서 한 번 더
+    if p.provider == "anthropic" || !p.free || p.trains_on_input {
+        bail!("판단 모델은 무료·학습 안 하는 OpenAI 호환 프리셋만({preset})");
+    }
+    if app.store.lock().unwrap().state.disabled_presets.contains(preset) {
+        bail!("{preset}는 콘솔에서 꺼져 있어요");
+    }
+    let t = Instant::now();
+    let base = p.base_url.clone().unwrap_or_else(|| "https://api.openai.com/v1".into());
+    let mut body = json!({
+        "model": p.model,
+        "messages": [{"role":"system","content": system}, {"role":"user","content": user}],
+        "temperature": 0,
+    });
+    // 추론 모델은 생각 토큰도 한도에 들어간다 — 넉넉히
+    if p.provider == "openai" {
+        body["max_completion_tokens"] = json!(400);
+    } else {
+        body["max_tokens"] = json!(400);
+    }
+    if let Some(e) = &p.reasoning_effort {
+        body["reasoning_effort"] = json!(e);
+    }
+    if let Some(x) = &p.extra {
+        for (k, v) in x {
+            body[k.as_str()] = v.clone();
+        }
+    }
+    let mut req = app.http.post(format!("{}/chat/completions", base.trim_end_matches('/'))).timeout(timeout).json(&body);
+    if p.api_key_env.as_deref() != Some("") {
+        let key = std::env::var(p.key_env()).map_err(|_| anyhow!("{} 없음", p.key_env()))?;
+        req = req.bearer_auth(key);
+    }
+    let r = req.send().await.map_err(|e| anyhow!("판단 {preset} 요청 실패: {}", if e.is_timeout() { "시간 초과".to_string() } else { e.to_string() }))?;
+    let status = r.status();
+    let v: Value = r.json().await.map_err(|e| anyhow!("판단 {preset} 응답 형식: {e}"))?;
+    if !status.is_success() {
+        bail!("판단 {preset} HTTP {status} {}", err_kind(&v));
+    }
+    let raw = strip_think(v["choices"][0]["message"]["content"].as_str().unwrap_or("")).trim().to_string();
+    let up = raw.to_uppercase();
+    let call = if up.starts_with("YES") || up == "예" {
+        true
+    } else if up.starts_with("NO") || up == "아니오" {
+        false
+    } else {
+        bail!("판단 {preset} 답이 YES/NO가 아님: {}", raw.chars().take(40).collect::<String>());
+    };
+    Ok(Verdict { call, ms: t.elapsed().as_millis() as u64, raw })
+}
+
 /// 일부 오픈 모델(Qwen 등)은 생각을 <think>…</think>로 본문에 섞는다 — 대답만 남긴다
 fn strip_think(s: &str) -> String {
     let mut out = s.to_string();
@@ -692,7 +783,8 @@ async fn answer_with(
         let st = app.store.lock().unwrap();
         st.state.guilds.get(&guild).map(|g| g.memories.iter().map(|m| format!("{} ({}, {})", m.text, m.by, m.date)).collect()).unwrap_or_default()
     };
-    let system = system_prompt(ch, &memories);
+    let names: Vec<String> = cfg.characters.values().map(|c| c.name.clone()).collect();
+    let system = system_prompt(ch, &names, &memories);
     let q = question_text(caller, ch, question);
     // 프롬프트 크기 상한 — 오래된 줄부터 뺀다. 상한(글자×2+200 ≤ 약 8만 토큰)은 Haiku 5.5의 10만 토큰 초과 단가 구간과
     // 모델 문맥 한도에 닿지 않게 잡았다. 예약·정산은 1구간 단가 하나로 충분해진다
@@ -852,7 +944,7 @@ async fn answer_with(
 
 /// 프리셋 하나만 실제로 불러 보는 시험(웹 콘솔 '두뇌 시험') — 대체 없이, 유료면 하루 상한에 똑같이 잡힌다.
 /// fill이면 가짜 대화 기록을 길게 붙여 프롬프트 캐시가 걸리는지도 본다(같은 시험을 두 번 하면 두 번째에 cache_read).
-pub async fn probe(app: &AppRef, preset: &str, question: &str, fill: bool, character: Option<&str>) -> Result<Answer> {
+pub async fn probe(app: &AppRef, preset: &str, question: &str, fill: bool, character: Option<&str>, style: Option<&str>) -> Result<Answer> {
     let cfg = app.cfg();
     // 캐릭터를 고르면 그 캐릭터 페르소나로(없으면 첫 캐릭터)
     let picked = character.and_then(|c| cfg.characters.get_key_value(c));
@@ -860,6 +952,9 @@ pub async fn probe(app: &AppRef, preset: &str, question: &str, fill: bool, chara
     let mut ch = base.clone();
     ch.brain = preset.to_string();
     ch.fallback = None;
+    if let Some(s) = style.filter(|s| crate::config::STYLES.contains(s)) {
+        ch.style = s.to_string();
+    }
     let lines: Vec<Line> = if fill {
         let now = Instant::now();
         (0..160u64)

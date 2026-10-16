@@ -326,7 +326,7 @@ async def _edge_once(v: TtsVoice, text: str) -> bytes:
     return bytes(buf)
 
 
-# 공급자 → 이 시각까지 뒤로 미룸(회로 차단기)
+# "공급자|목소리" → 이 시각까지 뒤로 미룸(회로 차단기). 목소리 단위 — 다국어 음성 하나가 거절돼도 edge 전체를 막지 않게
 TTS_BROKEN: dict[str, float] = {}
 TTS_COOLDOWN = 60
 
@@ -464,8 +464,45 @@ async def tts_openai(v: TtsVoice, text: str) -> np.ndarray:
     return decode_to_pcm(r.content)
 
 
+def _num(s: str, unit: str) -> int:
+    m = re.match(r"^([+-]?\d+)" + re.escape(unit) + r"$", s or "")
+    return int(m.group(1)) if m else 0
+
+
+async def tts_typecast(v: TtsVoice, text: str) -> np.ndarray:
+    """Typecast(쇼츠에서 많이 쓰는 캐릭터 목소리) — POST /v1/text-to-speech, 응답은 WAV 바이너리.
+    rate "+10%" → audio_tempo 1.1, pitch "+3Hz" → audio_pitch +3 반음(Typecast는 반음 단위, -12~12)"""
+    key = os.environ.get("TYPECAST_API_KEY")
+    if not key or not v.voice:
+        raise ProviderError("TYPECAST_API_KEY 또는 voice_id 없음")
+    tempo = min(2.0, max(0.5, 1 + _num(v.rate, "%") / 100))
+    pitch = min(12, max(-12, _num(v.pitch, "Hz")))
+    body = {
+        "voice_id": v.voice, "text": text[:2000], "model": "ssfm-v30", "language": "kor",
+        # smart: 문장 내용에 맞춰 감정을 고른다
+        "prompt": {"emotion_type": "smart"},
+        "output": {"audio_format": "wav", "audio_pitch": pitch, "audio_tempo": tempo},
+    }
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post("https://api.typecast.ai/v1/text-to-speech", headers={"X-API-KEY": key}, json=body)
+    if r.status_code != 200:
+        raise ProviderError(f"typecast HTTP {r.status_code}")
+    return decode_to_pcm(r.content)
+
+
 TTS = {"edge-tts": tts_edge, "azure-tts": tts_azure, "melotts": tts_melo,
-       "elevenlabs": tts_elevenlabs, "openai-tts": tts_openai}
+       "elevenlabs": tts_elevenlabs, "openai-tts": tts_openai, "typecast": tts_typecast}
+
+# edge-tts에서 한국어를 읽는 다국어 음성(2026-10-16 목록 확인) — 외국어 억양이 섞일 수 있다
+EDGE_MULTI = ["en-US-AvaMultilingualNeural", "en-US-EmmaMultilingualNeural", "fr-FR-VivienneMultilingualNeural",
+              "de-DE-SeraphinaMultilingualNeural", "pt-BR-ThalitaMultilingualNeural", "en-US-AndrewMultilingualNeural",
+              "en-US-BrianMultilingualNeural", "en-AU-WilliamMultilingualNeural", "fr-FR-RemyMultilingualNeural",
+              "de-DE-FlorianMultilingualNeural", "it-IT-GiuseppeMultilingualNeural"]
+# Azure 한국어 음성(키가 있어야 씀) — edge-tts에 없는 서현(아이)·지민·유진 등
+AZURE_KO = [("ko-KR-SunHiNeural", "Female", "선희"), ("ko-KR-JiMinNeural", "Female", "지민"), ("ko-KR-SeoHyeonNeural", "Female", "서현(아이)"),
+            ("ko-KR-YuJinNeural", "Female", "유진"), ("ko-KR-SoonBokNeural", "Female", "순복"), ("ko-KR-InJoonNeural", "Male", "인준"),
+            ("ko-KR-BongJinNeural", "Male", "봉진"), ("ko-KR-GookMinNeural", "Male", "국민"), ("ko-KR-HyunsuMultilingualNeural", "Male", "현수")]
+_TYPECAST_VOICES: list | None = None
 
 
 @app.post("/tts")
@@ -477,7 +514,8 @@ async def tts(req: TtsReq):
     # 회로 차단기: 최근 실패한 공급자는 TTS_COOLDOWN초 동안 뒤로 미룬다(매번 시간 초과를 기다리지 않게).
     # 다 미뤄졌으면 미룬 것도 차례로 시도한다
     now = time.time()
-    chain = sorted(req.chain, key=lambda v: TTS_BROKEN.get(v.provider, 0) > now)
+    bkey = lambda v: f"{v.provider}|{v.voice}"
+    chain = sorted(req.chain, key=lambda v: TTS_BROKEN.get(bkey(v), 0) > now)
     for v in chain:
         fn = TTS.get(v.provider)
         if fn is None:
@@ -489,10 +527,10 @@ async def tts(req: TtsReq):
             pcm = await asyncio.wait_for(fn(v, text), timeout=180 if v.provider == "melotts" else 25)
         except Exception as e:  # 공급자 오류·시간 초과·edge-tts 내부 예외 등 — 다음 공급자로
             errors.append({"provider": v.provider, "error": _err_kind(e)})
-            TTS_BROKEN[v.provider] = time.time() + TTS_COOLDOWN
+            TTS_BROKEN[bkey(v)] = time.time() + TTS_COOLDOWN
             log.warning("tts %s 실패 %s", v.provider, type(e).__name__)  # 글 내용은 남기지 않는다
             continue
-        TTS_BROKEN.pop(v.provider, None)
+        TTS_BROKEN.pop(bkey(v), None)
         ms = int((time.perf_counter() - t) * 1000)
         log.info("tts %s %dms %d자", v.provider, ms, len(text))
         return Response(pcm_to_wav(pcm, OUT_SR), media_type="audio/wav",
@@ -502,12 +540,45 @@ async def tts(req: TtsReq):
 
 @app.get("/voices")
 async def voices(provider: str = "edge-tts"):
+    global _TYPECAST_VOICES
+    if provider == "azure-tts":
+        return {"voices": [{"name": n, "gender": g, "label": l} for n, g, l in AZURE_KO]}
+    if provider == "typecast":
+        key = os.environ.get("TYPECAST_API_KEY")
+        if not key:
+            return {"voices": [], "error": "TYPECAST_API_KEY 없음"}
+        if _TYPECAST_VOICES is None:
+            # 목록 조회는 합성이 아니라 크레딧을 쓰지 않는다. 한 번 받아 두고 재사용
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get("https://api.typecast.ai/v3/voices", headers={"X-API-KEY": key}, params={"model": "ssfm-v30"})
+            if r.status_code != 200:
+                return {"voices": [], "error": f"typecast HTTP {r.status_code}"}
+            data = r.json()
+            # 목록이 바로 오거나 {"voices": [...]}·{"items": [...]}로 감싸져 올 수 있다. 이름은 {"kor","eng"} 또는 문자열
+            items = data if isinstance(data, list) else (data.get("voices") or data.get("items") or data.get("result") or []) if isinstance(data, dict) else []
+            out = []
+            for v in items:
+                if not isinstance(v, dict) or not v.get("voice_id"):
+                    continue
+                nm = v.get("voice_name")
+                name = (nm.get("kor") or nm.get("eng") or "") if isinstance(nm, dict) else str(nm or "")
+                cases = v.get("use_cases") if isinstance(v.get("use_cases"), list) else []
+                out.append({"name": str(v["voice_id"]), "gender": v.get("gender"),
+                            "label": f"{name} · {v.get('age', '')} · {','.join(map(str, cases))}", "preview": v.get("preview_url")})
+            if not out:
+                return {"voices": [], "error": "typecast 목록이 비었거나 모양이 다름"}
+            _TYPECAST_VOICES = out  # 잘 받은 목록만 기억
+        return {"voices": _TYPECAST_VOICES}
     if provider != "edge-tts":
         return {"voices": []}
     import edge_tts
 
     vs = await edge_tts.list_voices()
-    return {"voices": [{"name": v["ShortName"], "gender": v.get("Gender")} for v in vs if v["Locale"].startswith("ko-")]}
+    out = [{"name": v["ShortName"], "gender": v.get("Gender")} for v in vs if v["Locale"].startswith("ko-")]
+    have = {v["ShortName"] for v in vs}
+    out += [{"name": n, "gender": next((v.get("Gender") for v in vs if v["ShortName"] == n), None), "label": "다국어(한국어 읽음, 억양 섞일 수 있음)"}
+            for n in EDGE_MULTI if n in have]
+    return {"voices": out}
 
 
 @app.get("/health")

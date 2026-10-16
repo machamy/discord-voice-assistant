@@ -47,7 +47,10 @@ pub async fn reload(app: &AppRef) -> Result<()> {
         }
     }
     app.save_store();
-    *app.cfg.write().unwrap() = Arc::new(c);
+    *app.cfg_file.write().unwrap() = Arc::new(c);
+    app.refresh_cfg();
+    // 저장된 판단 설정이 지금 설정에 안 맞으면 바로 끈 상태로 저장(나중에 프리셋이 돌아와도 저절로 켜지지 않게)
+    let _ = app.judge();
     let sessions: Vec<_> = app.sessions.lock().await.values().cloned().collect();
     for s in sessions {
         s.reload_wake(app);
@@ -206,7 +209,8 @@ async fn main() -> Result<()> {
 
     let app: AppRef = Arc::new(App {
         cfg_path,
-        cfg: RwLock::new(Arc::new(cfg)),
+        cfg: RwLock::new(Arc::new(cfg.clone())),
+        cfg_file: RwLock::new(Arc::new(cfg)),
         store: Mutex::new(Store::load(PathBuf::from("data/state.json"))),
         sessions: tokio::sync::Mutex::new(HashMap::new()),
         http: reqwest::Client::builder().user_agent("voicebot/0.1").build()?,
@@ -217,9 +221,14 @@ async fn main() -> Result<()> {
         latency: Mutex::new(VecDeque::new()),
         last_used: Mutex::new(Default::default()),
         web_tokens: Mutex::new(HashMap::new()),
+        oauth_states: Mutex::new(HashMap::new()),
         login_fail: Mutex::new(HashMap::new()),
         started: Instant::now(),
     });
+    // 웹 콘솔에서 추가한 캐릭터를 얹는다
+    app.refresh_cfg();
+    // 저장된 판단 설정이 지금 설정에 안 맞으면 바로 끈 상태로 저장(나중에 프리셋이 돌아와도 저절로 켜지지 않게)
+    let _ = app.judge();
 
     tokio::spawn(sidecar::supervise(app.clone()));
     // 웹 콘솔은 별도 태스크 — 죽어도 음성은 계속(SPEC N-14)

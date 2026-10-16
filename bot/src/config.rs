@@ -25,6 +25,51 @@ pub struct Config {
     pub sidecar: Sidecar,
     #[serde(default)]
     pub notice: Notice,
+    #[serde(default)]
+    pub judge: Judge,
+}
+
+/// 판단 모델 — 이름이 애매하게 들렸을 때(비슷한 말·위험 별칭) "정말 캐릭터를 부른 말인가"를 작은 무료 모델에 묻는다(SPEC F-54)
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct Judge {
+    pub on: bool,
+    /// 무료 프리셋만(판단마다 호출되므로)
+    pub preset: String,
+    /// "애매할 때" = 비슷한 말·위험 별칭만, "이름도" = 헤이 없이 이름만 부른 것까지(헤이·이어서·이모지는 항상 통과)
+    pub scope: String,
+    /// 이 시간 안에 답이 없으면 판단 없이 원래 규칙대로
+    pub timeout_ms: u64,
+}
+
+impl Default for Judge {
+    fn default() -> Self {
+        Self { on: true, preset: "groq-fast".into(), scope: "애매할 때".into(), timeout_ms: 2500 }
+    }
+}
+
+pub const JUDGE_SCOPES: [&str; 2] = ["애매할 때", "이름도"];
+
+impl Judge {
+    pub fn validate(&self, cfg: &Config) -> std::result::Result<(), String> {
+        if !JUDGE_SCOPES.contains(&self.scope.as_str()) {
+            return Err(format!("판단 범위는 {} 중 하나", JUDGE_SCOPES.join("·")));
+        }
+        if !(300..=10_000).contains(&self.timeout_ms) {
+            return Err("판단 대기 시간은 300~10000ms".into());
+        }
+        // 꺼 두었으면 프리셋은 따지지 않는다(나중에 켤 때 검사)
+        if !self.on {
+            return Ok(());
+        }
+        match cfg.llm.presets.get(&self.preset) {
+            None => Err(format!("판단 모델 프리셋 '{}' 없음", self.preset)),
+            Some(p) if !p.free => Err(format!("판단 모델은 무료 프리셋만('{}'는 유료)", self.preset)),
+            Some(p) if p.trains_on_input => Err(format!("판단 모델에 입력을 학습에 쓰는 등급('{}')은 못 씀", self.preset)),
+            Some(p) if p.provider == "anthropic" => Err("판단 모델은 OpenAI 호환 프리셋만".into()),
+            _ => Ok(()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -186,9 +231,97 @@ pub struct Character {
     /// 질문 바로 뒤에 붙이는 한 줄 말투 상기 — 대화가 길어져도 말투가 흐려지지 않게(캐시 지점 뒤라 비용 거의 없음)
     #[serde(default)]
     pub reminder: String,
+    /// 존댓말 버전 페르소나 — 서버별로 `/설정 말투선택`에서 "존댓말"을 고르면 이걸 쓴다(비우면 성격 페르소나 + 존댓말 지시)
+    #[serde(default)]
+    pub persona_polite: String,
+    #[serde(default)]
+    pub reminder_polite: String,
+    /// 기본 말투: "성격"(캐릭터 카드, 반말) 또는 "존댓말"
+    #[serde(default = "default_style")]
+    pub style: String,
     /// 공급자별 목소리 — 키는 TTS 공급자 이름
     #[serde(default)]
     pub voice: BTreeMap<String, Voice>,
+}
+
+fn default_style() -> String {
+    STYLES[0].into()
+}
+
+/// 말투 종류 — 성격(캐릭터 카드 그대로) / 존댓말(공손한 해요체)
+pub const STYLES: [&str; 2] = ["성격", "존댓말"];
+
+impl Character {
+    pub fn polite(&self) -> bool {
+        self.style == STYLES[1]
+    }
+
+    /// 지금 말투에 맞는 페르소나
+    pub fn active_persona(&self) -> String {
+        if !self.polite() {
+            return self.persona.trim().to_string();
+        }
+        if !self.persona_polite.trim().is_empty() {
+            return self.persona_polite.trim().to_string();
+        }
+        format!(
+            "{}
+
+[말투] 위 설정의 성격과 관계는 그대로 두되, 반말 대신 상냥하고 공손한 존댓말(해요체)로만 말한다. 비꼬거나 놀리는 말은 하지 않는다.",
+            self.persona.trim()
+        )
+    }
+
+    pub fn active_reminder(&self) -> String {
+        let r = if self.polite() { &self.reminder_polite } else { &self.reminder };
+        if !r.trim().is_empty() {
+            r.trim().to_string()
+        } else if self.polite() {
+            "(존댓말로, <말>부터 시작)".into()
+        } else {
+            "(<말>부터 시작)".into()
+        }
+    }
+}
+
+/// 캐릭터 한 명 검증 — config.toml과 웹 콘솔에서 추가한 캐릭터 공통
+pub fn validate_character(k: &str, ch: &Character, presets: &BTreeMap<String, Preset>) -> std::result::Result<(), String> {
+    if k.trim().is_empty() || k.chars().count() > 25 || k.trim() != k {
+        return Err(format!("캐릭터 이름 '{k}'은 1~25자(앞뒤 공백 없이)"));
+    }
+    if ch.name.trim().is_empty() || ch.name.chars().count() > 25 {
+        return Err(format!("캐릭터 {k}: 표시 이름은 1~25자"));
+    }
+    if ch.emoji.chars().count() > 8 {
+        return Err(format!("캐릭터 {k}: 이모지는 8자 이내"));
+    }
+    if !presets.contains_key(&ch.brain) {
+        return Err(format!("캐릭터 {k}: 두뇌 프리셋 '{}' 없음", ch.brain));
+    }
+    if let Some(f) = &ch.fallback {
+        if !presets.contains_key(f) {
+            return Err(format!("캐릭터 {k}: 대체 프리셋 '{f}' 없음"));
+        }
+    }
+    if ch.wake.is_empty() || ch.wake.len() > 50 || ch.wake.iter().any(|w| w.trim().is_empty() || w.chars().count() > 20) {
+        return Err(format!("캐릭터 {k}: 호출어는 1~50개, 각 1~20자"));
+    }
+    crate::convo::Wake::compile(&ch.wake).map_err(|e| format!("캐릭터 {k}: 호출어 정규식 오류: {e}"))?;
+    for (prov, v) in &ch.voice {
+        validate_voice(prov, v).map_err(|e| format!("캐릭터 {k}: {e}"))?;
+    }
+    if !STYLES.contains(&ch.style.as_str()) {
+        return Err(format!("캐릭터 {k}: 말투(style)는 {} 중 하나", STYLES.join("·")));
+    }
+    for (what, t, max) in [("persona", &ch.persona, 6000), ("persona_polite", &ch.persona_polite, 6000), ("reminder", &ch.reminder, 300), ("reminder_polite", &ch.reminder_polite, 300)] {
+        if t.chars().count() > max {
+            return Err(format!("캐릭터 {k}: {what}는 {max}자 이내"));
+        }
+    }
+    if ch.persona.trim().is_empty() {
+        return Err(format!("캐릭터 {k}: persona(말투)가 비었음"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
@@ -227,11 +360,17 @@ impl Default for Limits {
 #[serde(default)]
 pub struct Web {
     pub bind: String,
+    /// 콘솔 바깥 주소(디스코드 로그인 돌아올 곳 = public_url + /auth/discord/callback). 비우면 디스코드 로그인 안 씀
+    pub public_url: String,
+    /// 디스코드 로그인을 허락할 사람(주인은 항상)
+    pub allowed_users: Vec<u64>,
+    /// 비밀번호 로그인(CONSOLE_PASSWORD) — 비우면 디스코드 로그인이 준비 안 됐을 때만 연다
+    pub password_login: Option<bool>,
 }
 
 impl Default for Web {
     fn default() -> Self {
-        Self { bind: "0.0.0.0:8694".into() }
+        Self { bind: "0.0.0.0:8694".into(), public_url: String::new(), allowed_users: vec![], password_login: None }
     }
 }
 
@@ -293,7 +432,7 @@ pub fn stt_provider_ok(x: &str) -> bool {
             && m.split('/').all(|seg| seg.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())))
 }
 
-pub const TTS_PROVIDERS: [&str; 5] = ["edge-tts", "azure-tts", "melotts", "elevenlabs", "openai-tts"];
+pub const TTS_PROVIDERS: [&str; 6] = ["edge-tts", "azure-tts", "melotts", "elevenlabs", "openai-tts", "typecast"];
 
 /// 목소리 설정 검증 — 웹·명령·설정 파일 공통(SSML·요청에 들어가는 값이라 형식을 좁힌다)
 pub fn validate_voice(provider: &str, v: &Voice) -> std::result::Result<(), String> {
@@ -321,7 +460,12 @@ pub fn validate_voice(provider: &str, v: &Voice) -> std::result::Result<(), Stri
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let s = std::fs::read_to_string(path).with_context(|| format!("{} 읽기 실패", path.display()))?;
-        let c: Config = toml::from_str(&s).with_context(|| format!("{} 형식 오류", path.display()))?;
+        let mut c: Config = toml::from_str(&s).with_context(|| format!("{} 형식 오류", path.display()))?;
+        // 판단 모델 설정이 틀렸다고 봇이 안 뜨면 안 된다 — 끄고 알린다([judge]가 없고 groq-fast도 없는 옛 설정 등)
+        if let Err(e) = c.judge.validate(&c) {
+            tracing::warn!("[judge] {e} — 판단 모델을 끄고(기본값) 시작");
+            c.judge = Judge { on: false, ..Judge::default() };
+        }
         c.validate()?;
         Ok(c)
     }
@@ -331,22 +475,9 @@ impl Config {
             bail!("owner_id는 0일 수 없다(디스코드 유저 ID)");
         }
         for (k, ch) in &self.characters {
-            if !self.llm.presets.contains_key(&ch.brain) {
-                bail!("캐릭터 {k}: 두뇌 프리셋 '{}' 없음", ch.brain);
-            }
-            if let Some(f) = &ch.fallback {
-                if !self.llm.presets.contains_key(f) {
-                    bail!("캐릭터 {k}: 대체 프리셋 '{f}' 없음");
-                }
-            }
-            if ch.wake.is_empty() || ch.wake.len() > 50 || ch.wake.iter().any(|w| w.trim().is_empty() || w.chars().count() > 20) {
-                bail!("캐릭터 {k}: 호출어는 1~50개, 각 1~20자");
-            }
-            crate::convo::Wake::compile(&ch.wake).map_err(|e| anyhow::anyhow!("캐릭터 {k}: 호출어 정규식 오류: {e}"))?;
-            for (prov, v) in &ch.voice {
-                validate_voice(prov, v).map_err(|e| anyhow::anyhow!("캐릭터 {k}: {e}"))?;
-            }
+            validate_character(k, ch, &self.llm.presets).map_err(|e| anyhow::anyhow!(e))?;
         }
+        self.judge.validate(self).map_err(|e| anyhow::anyhow!("[judge] {e}"))?;
         let l = &self.listen;
         let rng = |v: u64, lo: u64, hi: u64, name: &str| -> Result<()> {
             if (lo..=hi).contains(&v) { Ok(()) } else { bail!("[listen] {name}은(는) {lo}~{hi}") }
@@ -373,11 +504,6 @@ impl Config {
         }
         if self.characters.is_empty() || self.characters.len() > 25 {
             bail!("캐릭터는 1~25개(디스코드 선택지 한도)");
-        }
-        for k in self.characters.keys() {
-            if k.trim().is_empty() || k.chars().count() > 25 {
-                bail!("캐릭터 이름 '{k}'은 1~25자");
-            }
         }
         for (k, p) in &self.llm.presets {
             // 명령 자동완성 값·웹 콘솔 id로 쓰인다 — 짧은 영문·숫자·-_. 만
@@ -455,6 +581,38 @@ mod tests {
         assert!(c.llm.free_chain.iter().all(|f| c.llm.presets[f].free));
         assert_eq!(c.llm.presets["luna"].reasoning_effort.as_deref(), Some("none"));
         assert!(c.llm.presets["groq-free"].extra.as_ref().is_some_and(|x| x["include_reasoning"] == false));
+    }
+
+    #[test]
+    fn styles_and_judge() {
+        let c: Config = toml::from_str(include_str!("../config.example.toml")).expect("형식");
+        // 두 캐릭터 모두 존댓말 페르소나가 있고, 말투를 바꾸면 그쪽을 쓴다
+        for ch in c.characters.values() {
+            assert!(!ch.persona_polite.trim().is_empty());
+            let mut p = ch.clone();
+            assert_eq!(p.active_persona(), ch.persona.trim());
+            p.style = "존댓말".into();
+            assert_eq!(p.active_persona(), ch.persona_polite.trim());
+            assert!(p.active_reminder().contains("존댓말"));
+            // 존댓말 글이 없으면 성격 글 + 존댓말 지시
+            p.persona_polite.clear();
+            assert!(p.active_persona().starts_with(ch.persona.trim()) && p.active_persona().contains("존댓말"));
+        }
+        assert!(c.judge.validate(&c).is_ok());
+        let mut j = c.judge.clone();
+        j.preset = "haiku".into();
+        assert!(j.validate(&c).is_err(), "유료 프리셋은 판단 모델로 못 씀");
+        j.preset = "gemini-free".into();
+        assert!(j.validate(&c).is_err(), "학습 등급은 못 씀");
+        // 웹 콘솔 캐릭터 검증: 이름 공백·말투 종류·빈 페르소나
+        let mut x = c.characters["클짱"].clone();
+        assert!(validate_character("젬짱", &x, &c.llm.presets).is_ok());
+        assert!(validate_character(" 젬짱", &x, &c.llm.presets).is_err());
+        x.style = "반말".into();
+        assert!(validate_character("젬짱", &x, &c.llm.presets).is_err());
+        x.style = "성격".into();
+        x.persona = " ".into();
+        assert!(validate_character("젬짱", &x, &c.llm.presets).is_err());
     }
 
     #[test]

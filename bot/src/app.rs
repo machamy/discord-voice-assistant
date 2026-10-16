@@ -37,7 +37,10 @@ pub struct RateInfo {
 
 pub struct App {
     pub cfg_path: PathBuf,
+    /// 실제로 쓰는 설정 = config.toml + 웹 콘솔에서 추가한 캐릭터(refresh_cfg)
     pub cfg: RwLock<Arc<Config>>,
+    /// config.toml 그대로
+    pub cfg_file: RwLock<Arc<Config>>,
     pub store: Mutex<Store>,
     pub sessions: tokio::sync::Mutex<HashMap<u64, Arc<Session>>>,
     pub http: reqwest::Client,
@@ -48,8 +51,10 @@ pub struct App {
     /// 말 끝남 → 첫 소리(ms) 최근 200개 — SPEC N-01
     pub latency: Mutex<VecDeque<u64>>,
     pub last_used: Mutex<LastUsed>,
-    /// 콘솔 세션 토큰 → 발급 시각(만료·개수 제한)
-    pub web_tokens: Mutex<HashMap<String, Instant>>,
+    /// 콘솔 세션 토큰 → (발급 시각, 로그인한 사람 — 비밀번호 로그인이면 0)
+    pub web_tokens: Mutex<HashMap<String, (Instant, u64, String)>>,
+    /// 디스코드 로그인 진행 중인 state → 발급 시각
+    pub oauth_states: Mutex<HashMap<String, (Instant, String)>>,
     pub login_fail: Mutex<HashMap<String, (u32, Instant)>>,
     pub started: Instant,
 }
@@ -57,6 +62,76 @@ pub struct App {
 impl App {
     pub fn cfg(&self) -> Arc<Config> {
         self.cfg.read().unwrap().clone()
+    }
+
+    /// config.toml 설정에 웹 콘솔 캐릭터를 얹어 cfg를 다시 만든다 — 파일과 이름이 겹치거나 검증에 걸리는 캐릭터는 건너뛴다
+    pub fn refresh_cfg(&self) {
+        let mut c = (*self.cfg_file.read().unwrap().clone()).clone();
+        let (custom, extra, risky) = {
+            let st = self.store.lock().unwrap();
+            (st.state.custom_characters.clone(), st.state.wake_extra.clone(), st.state.wake_risky.clone())
+        };
+        let norm = |w: &str| w.split_whitespace().collect::<String>();
+        let fe = |e: &str| e.chars().filter(|&x| x != '\u{fe0f}').collect::<String>();
+        // 캐릭터의 모든 호출어(기본·추가·위험 별칭), 띄어쓰기 없이
+        let all_words = |k: &str, base: &[String]| -> Vec<String> {
+            base.iter().chain(extra.get(k).into_iter().flatten()).chain(risky.get(k).into_iter().flatten()).map(|w| norm(w)).collect()
+        };
+        for (k, ch) in custom {
+            if c.characters.contains_key(&k) || c.characters.len() >= 25 {
+                tracing::warn!("웹 콘솔 캐릭터 {k}: config.toml과 이름이 겹치거나 25명을 넘어 건너뜀");
+                continue;
+            }
+            if let Err(e) = crate::config::validate_character(&k, &ch, &c.llm.presets) {
+                tracing::warn!("웹 콘솔 캐릭터 건너뜀: {e}");
+                continue;
+            }
+            // 추가할 때 한 검사를 설정을 다시 읽은 뒤에도 — 학습 등급 두뇌, 앞선 캐릭터와 겹치는 호출어·이모지
+            let trains = std::iter::once(&ch.brain).chain(ch.fallback.iter()).any(|p| c.llm.presets.get(p).is_some_and(|p| p.trains_on_input));
+            let mine = all_words(&k, &ch.wake);
+            let wake_clash = c.characters.iter().any(|(ok, o)| all_words(ok, &o.wake).iter().any(|w| mine.contains(w)));
+            let emoji_clash = !fe(&ch.emoji).is_empty() && c.characters.values().any(|o| fe(&o.emoji) == fe(&ch.emoji));
+            if trains || wake_clash || emoji_clash {
+                tracing::warn!("웹 콘솔 캐릭터 {k} 건너뜀: {}", if trains { "입력을 학습에 쓰는 두뇌" } else if wake_clash { "다른 캐릭터와 겹치는 호출어" } else { "다른 캐릭터와 겹치는 이모지" });
+                continue;
+            }
+            c.characters.insert(k, ch);
+        }
+        *self.cfg.write().unwrap() = Arc::new(c);
+    }
+
+    /// 웹 콘솔에서 추가한 캐릭터인가(지울 수 있나)
+    pub fn is_custom(&self, key: &str) -> bool {
+        // config.toml에 같은 이름이 새로 생겨 건너뛰는 웹 캐릭터도 지울 수 있게 — 저장소에 있으면 웹 캐릭터
+        self.store.lock().unwrap().state.custom_characters.contains_key(key)
+    }
+
+    /// 판단 모델 설정 — 웹 콘솔 값 우선, 검증에 걸리면 config
+    pub fn judge(&self) -> crate::config::Judge {
+        let cfg = self.cfg();
+        let (j, disabled) = {
+            let st = self.store.lock().unwrap();
+            (st.state.judge.clone(), st.state.disabled_presets.clone())
+        };
+        // 콘솔에서 꺼 둔 설정은 그대로 끔(프리셋이 사라져도 config 기본값으로 다시 켜지지 않게). 켜 둔 설정이 틀리면 끈다
+        let mut j = match j {
+            Some(j) if !j.on => j,
+            Some(j) if j.validate(&cfg).is_ok() => j,
+            Some(mut j) => {
+                // 켜 둔 설정이 틀려졌다(프리셋 삭제 등) — 끈 상태로 저장해 두어, 나중에 프리셋이 돌아와도 저절로 켜지지 않게
+                tracing::warn!("판단 모델 설정({})이 맞지 않아 끔", j.preset);
+                j.on = false;
+                self.store.lock().unwrap().state.judge = Some(j.clone());
+                self.save_store();
+                j
+            }
+            None => cfg.judge.clone(),
+        };
+        // 웹 콘솔에서 끈 프리셋은 판단에도 쓰지 않는다(원래 규칙대로)
+        if disabled.contains(&j.preset) {
+            j.on = false;
+        }
+        j
     }
 
     pub fn ctx(&self) -> Option<Context> {
@@ -97,6 +172,12 @@ impl App {
             }
             if let Some(v) = &o.voice {
                 c.voice = v.clone();
+            }
+            if let Some(s) = o.style.as_ref().filter(|s| crate::config::STYLES.contains(&s.as_str())) {
+                c.style = s.clone();
+            }
+            if let Some(p) = &o.persona_polite {
+                c.persona_polite = p.clone();
             }
         }
         Some(c)

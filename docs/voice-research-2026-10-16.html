@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>목소리 조사 2026-10-16</title>
+<style>
+  :root { --bg:#fbfaf7; --text:#222; --dim:#666; --line:#ddd; --accent:#c4643f; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1e1f22; --text:#e6e6e6; --dim:#a0a3aa; --line:#3a3c42; --accent:#e8a17f; } }
+  body { margin:0 auto; max-width:900px; padding:24px 16px; background:var(--bg); color:var(--text); font:15px/1.65 system-ui, "Malgun Gothic", sans-serif; }
+  h1 { font-size:22px; } h2 { font-size:18px; margin-top:28px; border-bottom:1px solid var(--line); padding-bottom:4px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; } td, th { border-bottom:1px solid var(--line); padding:6px; text-align:left; vertical-align:top; }
+  .dim { color:var(--dim); } code { font-family:Consolas, monospace; font-size:13px; } a { color:var(--accent); }
+  .wrap { overflow-x:auto; }
+</style>
+</head>
+<body>
+<h1>목소리(TTS) 조사 — 귀엽고 듣기 좋은 한국어 목소리</h1>
+<p class="dim">2026-10-16 · 요구: "다양한 목소리 찾아줘, 버튜버 플젝에선 뭐 썼는지도, 귀여운·듣기 좋은 목소리, 쇼츠에서 많이 쓰는 것도 좋음".
+웹 검색 결과와 보조 PC 실측을 합쳤다. 가격·한도는 조사 시점 기준이고 바뀔 수 있다.</p>
+
+<h2>결론</h2>
+<ol>
+  <li><b>지금 무료로</b>: edge-tts 선희(<code>ko-KR-SunHiNeural</code>)에 높낮이 +25~38Hz·속도 +8~12%를 주면 귀엽게 들린다(너무 올리면 칩멍크).
+    다국어 음성 <code>en-US-EmmaMultilingualNeural</code>·<code>en-US-AvaMultilingualNeural</code>은 한국어를 읽는다(보조 PC 실측: 4.7~5.5초 음성을 0.9~1.3초에 합성).
+    억양이 살짝 외국인 같아서 캐릭터 개성으로 쓸 만하다. → 웹 콘솔 캐릭터 카드 <b>빠른 설정</b> 버튼.</li>
+  <li><b>쇼츠 캐릭터 목소리</b>: Typecast(캐릭터 목소리가 많고 한국어가 강함). API가 있고 무료 3만 크레딧(1글자 = 1크레딧), Lite $15/월.
+    봇에 <code>typecast</code> 공급자를 넣었다 — <code>TYPECAST_API_KEY</code>만 넣으면 카드에 목록이 뜬다(유료라 주인 승인 뒤).</li>
+  <li><b>무료 범위 공식 경로</b>: Azure Speech F0(월 50만 자 무료). edge에 없는 서현(아이 목소리)·지민·유진 + 감정 스타일. 봇에 이미 <code>azure-tts</code>가 있어 키만 넣으면 된다.</li>
+  <li><b>로컬(설치 필요)</b>: 특정 캐릭터 목소리를 원하면 GPT-SoVITS v2(1분 음성으로 클론, MIT). 1060 6GB에서 whisper와 같이 돌리면 빠듯하다. 학습 음성의 권리 확인이 먼저다.</li>
+</ol>
+
+<h2>AI 버튜버 프로젝트가 쓰는 TTS</h2>
+<div class="wrap"><table>
+<tr><th>프로젝트</th><th>지원 TTS</th></tr>
+<tr><td>Open-LLM-VTuber</td><td>edge-tts(기본, 키 없음), GPT-SoVITS, CosyVoice, MeloTTS, sherpa-onnx, Coqui, Bark, Fish Audio, Azure</td></tr>
+<tr><td>airi (moeru-ai)</td><td>unspeech로 묶음 — ElevenLabs, OpenAI tts-1, Volcengine, index-tts, 브라우저·데스크톱 로컬</td></tr>
+<tr><td>Amica</td><td>ElevenLabs, OpenAI, SpeechT5, Coqui, Piper, AllTalk, Kokoro, RVC</td></tr>
+</table></div>
+<p>공통 패턴: <b>무료면 edge-tts, 로컬이면 GPT-SoVITS·CosyVoice, 유료면 ElevenLabs</b>. 이 봇의 체인(edge → azure → melotts, 선택으로 elevenlabs·openai·typecast)과 같은 결이다.</p>
+
+<h2>쇼츠·틱톡에서 많이 쓰는 목소리</h2>
+<div class="wrap"><table>
+<tr><th>서비스</th><th>한국어</th><th>API</th><th>가격</th><th>메모</th></tr>
+<tr><td>Typecast</td><td>강함</td><td>있음</td><td>무료 3만 크레딧, Lite $15/월</td><td>캐릭터 목소리 다수. ssfm-v30, 감정(smart·happy 등), WAV 직접 응답</td></tr>
+<tr><td>CLOVA Voice</td><td>강함</td><td>있음(NCP)</td><td>월 기본료 + 100만 자</td><td>아이·여성 화자. CLOVA Dubbing은 API 없음</td></tr>
+<tr><td>ElevenLabs</td><td>지원</td><td>있음</td><td>무료 1만 크레딧(상업 불가), $6/월~</td><td>Voice Library에 애니풍 음성. Flash 지연 짧음</td></tr>
+<tr><td>Supertone Play</td><td>강함</td><td>있음</td><td>약 $56~80/월</td><td>표현력 좋음, 비쌈</td></tr>
+<tr><td>Vrew·CapCut</td><td>있음</td><td>없음</td><td>-</td><td>봇에 못 붙임(자동 추출은 약관 위반 소지)</td></tr>
+</table></div>
+
+<h2>edge-tts에서 한국어를 읽는 음성 (2026-10-16 목록 확인)</h2>
+<p>한국어: <code>ko-KR-SunHiNeural</code>(여), <code>ko-KR-InJoonNeural</code>(남), <code>ko-KR-HyunsuMultilingualNeural</code>(남).<br>
+다국어(한국어 읽음): Ava·Emma·Andrew·Brian(en-US), William(en-AU), Vivienne·Remy(fr-FR), Seraphina·Florian(de-DE), Giuseppe(it-IT), Thalita(pt-BR).</p>
+<p>실측(보조 PC, "안녕하세요, 저는 클짱이에요. 오늘도 잘 부탁해요!"): Emma 1.3초·Ava 0.9초·Vivienne 1.8초·Seraphina 2.0초·Thalita 1.5초(선희 0.5초) 합성 성공.
+연달아 부를 때 Vivienne가 한 번 연결을 거절(WSServerHandshakeError)했는데, 그때 회로 차단기가 edge 전체를 60초 막아 선희까지 MeloTTS로 넘어갔다
+→ 차단기를 <b>목소리 단위</b>로 바꿨다. 다국어 음성은 선희보다 1~1.5초 느리다(첫 소리 지연에 그대로 더해짐).</p>
+
+<h2>대형 클라우드</h2>
+<ul>
+  <li>Google Chirp3-HD: 월 100만 자 무료, 이후 100만 자당 $30.</li>
+  <li>Gemini TTS: ko-KR GA, "귀엽게·들뜬 말투로" 같은 스타일 지시. 토큰 과금.</li>
+  <li>OpenAI gpt-4o-mini-tts: 분당 약 $0.015, instructions로 말투 지시(한국어는 공식 명시 없음). 봇에 <code>openai-tts</code> 있음.</li>
+</ul>
+
+<h2>출처</h2>
+<ul class="dim">
+  <li>Typecast API: https://typecast.ai/docs/api-reference/text-to-speech/text-to-speech · 가격 https://typecast.ai/pricing/api/</li>
+  <li>Open-LLM-VTuber 리뷰: https://andrew.ooo/posts/open-llm-vtuber-offline-ai-companion-review/</li>
+  <li>airi 음성 설정: https://www.mintlify.com/moeru-ai/airi/configuration/voice-synthesis · Amica: https://docs.heyamica.com/overview</li>
+  <li>CLOVA Voice: https://guide.ncloud-docs.com/docs/clovavoice-spec · Google TTS 가격: https://cloud.google.com/text-to-speech/pricing</li>
+  <li>Gemini TTS: https://docs.cloud.google.com/text-to-speech/docs/gemini-tts · OpenAI TTS: https://developers.openai.com/api/docs/guides/text-to-speech</li>
+  <li>GPT-SoVITS: https://doc.pyvideotrans.com/en/gptsovits</li>
+</ul>
+</body>
+</html>

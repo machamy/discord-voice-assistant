@@ -7,7 +7,7 @@ use anyhow::Result;
 use chrono::{FixedOffset, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Limits, Voice};
+use crate::config::{Character, Judge, Limits, Voice};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -27,6 +27,10 @@ pub struct State {
     pub wake_risky: BTreeMap<String, Vec<String>>,
     /// 받아쓰기 힌트(로컬 whisper hotwords) — 웹 콘솔에서 켬. 짧은 소리에 호출어를 지어내므로 min_ms 이상 발화에만
     pub stt_hint: SttHint,
+    /// 웹 콘솔에서 추가한 캐릭터 — config.toml 캐릭터에 더해진다(같은 이름은 못 씀)
+    pub custom_characters: BTreeMap<String, Character>,
+    /// 판단 모델 설정(없으면 config [judge])
+    pub judge: Option<Judge>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +98,10 @@ pub struct CharOverride {
     pub fallback: Option<String>,
     pub persona: Option<String>,
     pub voice: Option<BTreeMap<String, Voice>>,
+    /// 말투 선택 — "성격" / "존댓말"
+    pub style: Option<String>,
+    /// 존댓말 페르소나 덮어쓰기
+    pub persona_polite: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

@@ -59,7 +59,16 @@ pub async fn stt(app: &AppRef, pcm: &[i16]) -> Result<SttResult> {
 
 /// 캐릭터 목소리로 TTS 체인을 만든다 — 전역 체인 순서 + 캐릭터의 공급자별 목소리
 pub fn voice_chain(app: &AppRef, voices: &std::collections::BTreeMap<String, Voice>) -> Vec<TtsVoice> {
-    app.tts_chain()
+    let mut order = app.tts_chain();
+    // 캐릭터에 따로 고른 캐릭터 목소리(Typecast·ElevenLabs 음성 ID)는 전역 체인에 없어도 맨 앞에 — 실패하면 체인대로
+    for p in ["elevenlabs", "typecast"] {
+        if voices.get(p).is_some_and(|v| !v.voice.is_empty()) {
+            // 체인 뒤쪽에 있어도 맨 앞으로
+            order.retain(|x| x != p);
+            order.insert(0, p.to_string());
+        }
+    }
+    order
         .into_iter()
         .map(|p| {
             let v = voices.get(&p).cloned().unwrap_or_default();
@@ -100,7 +109,8 @@ pub async fn voices(app: &AppRef, provider: &str) -> Result<serde_json::Value> {
         .http
         .get(format!("{}/voices", base(app)))
         .query(&[("provider", provider)])
-        .timeout(Duration::from_secs(15))
+        // 사이드카가 Typecast 목록을 최대 20초 기다린다 — 그보다 길게
+        .timeout(Duration::from_secs(25))
         .send()
         .await?;
     Ok(r.json().await?)
