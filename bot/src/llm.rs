@@ -620,26 +620,23 @@ pub fn judge_prompt(names: &[String], ch_name: &str, variants: &[String], word: 
     JudgePrompt { system, user: user_q, state: user, instructions, yes, no }
 }
 
-/// 판단 모델에 묻는다 — 무료 OpenAI 호환은 YES/NO 한 단어, 판단 전용(decisions)은 "부름" 확률을 받아 기준과 비교
-pub async fn judge(app: &AppRef, jd: &crate::config::Judge, preset: &str, jp: &JudgePrompt, timeout: Duration) -> Result<Verdict> {
-    let cfg = app.cfg();
-    let p = cfg.llm.presets.get(preset).ok_or_else(|| anyhow!("판단 프리셋 {preset} 없음"))?;
-    // 어떤 경로로 불려도(시험 포함) 학습 안 함·켜져 있음, 그리고 무료 OpenAI 호환이거나 판단 전용만 — 비용·데이터 규칙을 여기서 한 번 더
-    if p.trains_on_input || !(p.is_decision() || (p.free && p.provider != "anthropic")) {
-        bail!("판단 모델은 학습 안 하는 무료 OpenAI 호환 프리셋이나 판단 전용 프리셋만({preset})");
-    }
-    if app.store.lock().unwrap().state.disabled_presets.contains(preset) {
-        bail!("{preset}는 콘솔에서 꺼져 있어요");
-    }
+/// 판단 모델에 보내는 요청 — (주소, 본문). 실제 호출과 웹 콘솔 "프롬프트 원문"이 같은 함수를 쓴다(키는 본문에 없음)
+pub fn judge_request(p: &Preset, jp: &JudgePrompt) -> (String, Value) {
     if p.is_decision() {
-        return judge_decision(app, preset, p, jd.threshold_for(p), jp, timeout).await;
+        let base = p.base_url.clone().unwrap_or_else(|| "https://openrouter.ai/api".into());
+        let body = json!({
+            "model": p.model,
+            "state": jp.state,
+            "questions": {"call": {"type": "noul", "instructions": jp.instructions, "criteria": {"true": jp.yes, "false": jp.no}}},
+            // 입력을 학습·보관하지 않는 공급자로만
+            "provider": {"data_collection": "deny"},
+        });
+        return (format!("{}/alpha/decisions", base.trim_end_matches('/')), body);
     }
-    let (system, user) = (jp.system.as_str(), jp.user.as_str());
-    let t = Instant::now();
     let base = p.base_url.clone().unwrap_or_else(|| "https://api.openai.com/v1".into());
     let mut body = json!({
         "model": p.model,
-        "messages": [{"role":"system","content": system}, {"role":"user","content": user}],
+        "messages": [{"role":"system","content": jp.system}, {"role":"user","content": jp.user}],
         "temperature": 0,
     });
     // 추론 모델은 생각 토큰도 한도에 들어간다 — 넉넉히
@@ -656,7 +653,26 @@ pub async fn judge(app: &AppRef, jd: &crate::config::Judge, preset: &str, jp: &J
             body[k.as_str()] = v.clone();
         }
     }
-    let mut req = app.http.post(format!("{}/chat/completions", base.trim_end_matches('/'))).timeout(timeout).json(&body);
+    (format!("{}/chat/completions", base.trim_end_matches('/')), body)
+}
+
+/// 판단 모델에 묻는다 — 무료 OpenAI 호환은 YES/NO 한 단어, 판단 전용(decisions)은 "부름" 확률을 받아 기준과 비교
+pub async fn judge(app: &AppRef, jd: &crate::config::Judge, preset: &str, jp: &JudgePrompt, timeout: Duration) -> Result<Verdict> {
+    let cfg = app.cfg();
+    let p = cfg.llm.presets.get(preset).ok_or_else(|| anyhow!("판단 프리셋 {preset} 없음"))?;
+    // 어떤 경로로 불려도(시험 포함) 학습 안 함·켜져 있음, 그리고 무료 OpenAI 호환이거나 판단 전용만 — 비용·데이터 규칙을 여기서 한 번 더
+    if p.trains_on_input || !(p.is_decision() || (p.free && p.provider != "anthropic")) {
+        bail!("판단 모델은 학습 안 하는 무료 OpenAI 호환 프리셋이나 판단 전용 프리셋만({preset})");
+    }
+    if app.store.lock().unwrap().state.disabled_presets.contains(preset) {
+        bail!("{preset}는 콘솔에서 꺼져 있어요");
+    }
+    if p.is_decision() {
+        return judge_decision(app, preset, p, jd.threshold_for(p), jp, timeout).await;
+    }
+    let t = Instant::now();
+    let (url, body) = judge_request(p, jp);
+    let mut req = app.http.post(url).timeout(timeout).json(&body);
     if p.api_key_env.as_deref() != Some("") {
         let key = std::env::var(p.key_env()).map_err(|_| anyhow!("{} 없음", p.key_env()))?;
         req = req.bearer_auth(key);
@@ -687,18 +703,11 @@ async fn judge_decision(app: &AppRef, preset: &str, p: &Preset, threshold: f64, 
         bail!("오늘 유료 상한에 닿아 판단 전용 모델({preset})은 안 불러요");
     }
     let t = Instant::now();
-    let base = p.base_url.clone().unwrap_or_else(|| "https://openrouter.ai/api".into());
-    let body = json!({
-        "model": p.model,
-        "state": jp.state,
-        "questions": {"call": {"type": "noul", "instructions": jp.instructions, "criteria": {"true": jp.yes, "false": jp.no}}},
-        // 입력을 학습·보관하지 않는 공급자로만
-        "provider": {"data_collection": "deny"},
-    });
+    let (url, body) = judge_request(p, jp);
     let key = std::env::var(p.key_env()).map_err(|_| anyhow!("{} 없음", p.key_env()))?;
     let r = app
         .http
-        .post(format!("{}/alpha/decisions", base.trim_end_matches('/')))
+        .post(url)
         .timeout(timeout)
         .bearer_auth(key)
         .json(&body)
@@ -706,10 +715,16 @@ async fn judge_decision(app: &AppRef, preset: &str, p: &Preset, threshold: f64, 
         .await
         .map_err(|e| anyhow!("판단 {preset} 요청 실패: {}", if e.is_timeout() { "시간 초과".to_string() } else { e.to_string() }))?;
     let status = r.status();
-    let v: Value = r.json().await.map_err(|e| anyhow!("판단 {preset} 응답 형식: {e}"))?;
+    // 성공(2xx)이면 응답을 못 읽어도 과금됐을 수 있다 — 본문 읽기·파싱 실패도 비용은 적고(추정치) 실패로 돌린다
+    let parsed: Result<Value> = match r.bytes().await {
+        Ok(b) => serde_json::from_slice(&b).map_err(|e| anyhow!("판단 {preset} 응답 형식: {e}")),
+        Err(e) => Err(anyhow!("판단 {preset} 응답 읽기 실패: {e}")),
+    };
     if !status.is_success() {
+        let v = parsed.unwrap_or(Value::Null);
         bail!("판단 {preset} HTTP {status} {}", err_kind(&v));
     }
+    let v = parsed.as_ref().cloned().unwrap_or(Value::Null);
     // 요청이 성공했으면 과금됐다 — 확률을 못 읽어도 비용은 먼저 적는다
     let cost = v["usage"]["cost"].as_f64().filter(|c| c.is_finite() && *c >= 0.0);
     if !p.free {
@@ -725,6 +740,7 @@ async fn judge_decision(app: &AppRef, preset: &str, p: &Preset, threshold: f64, 
         drop(st);
         app.save_store();
     }
+    parsed?;
     let prob = v["answers"]["call"]["noul"].as_f64().filter(|x| x.is_finite() && (0.0..=1.0).contains(x)).ok_or_else(|| anyhow!("판단 {preset} 답에 확률이 없음"))?;
     Ok(Verdict {
         call: prob >= threshold,

@@ -41,7 +41,7 @@ allowed_users = []
 # 판단 모델 — 이름이 애매하게 들렸을 때(비슷한 말·위험 별칭) "정말 부른 말인가"를 작은 모델에 묻는다(SPEC F-54·F-59)
 on = true
 preset = "jev"             # 무료 OpenAI 호환 프리셋(YES/NO) 또는 판단 전용 프리셋(provider = "decisions", 확률)
-# threshold = 0.65         # 판단 전용 모델의 부름 기준 확률. 비우면 프리셋 judge_threshold
+# threshold = 0.80         # 판단 전용 모델의 부름 기준 확률. 비우면 프리셋 judge_threshold
 scope = "애매할 때"          # "이름도"면 헤이 없이 이름만 부른 것까지 묻는다
 timeout_ms = 2500          # 이보다 늦으면 판단 없이 원래 규칙대로
 
@@ -133,14 +133,14 @@ extra = { include_reasoning = false }
 judge_note = "무료 · 처음 보는 문장 18/21, 깨진 받아쓰기 14/19 · 0.42초 · 연달아 부르면 무료 한도로 실패(2026-10-16 실측 45회 중 10회)"
 
 # ── 판단 전용 모델(OpenRouter Decisions API) — 글을 만들지 않고 "부름" 확률만 낸다. 판단 모델로만 고를 수 있다(SPEC F-59)
-# 실측 2026-10-16: 처음 보는 문장 26 + 받아쓰기 깨진 문장 24 = 50문장, 추천 기준 확률일 때. 회당 비용은 입력 약 500토큰 기준
+# 실측 2026-10-16: 일반 문장(원래 뜻으로 쓴 비슷한 말·3인칭 언급·이름 얘기) 72 + 부른 문장 25, 실제 대화 기록 350줄. 회당 비용은 입력 약 500토큰 기준
 [llm.presets.jev]
 provider = "decisions"
 model = "typesafe/jev-1.14"
 api_key_env = "OPENROUTER_API_KEY"
 price_in = 0.042
-judge_threshold = 0.65
-judge_note = "추천 · 50문장 중 49(깨진 받아쓰기 24/24) · 0.41초 · 회당 약 $0.00003"
+judge_threshold = 0.80
+judge_note = "추천 · 기준 0.8: 일반 문장 오탐 3/72·놓침 2/25, 실제 대화 애매한 호출 3/3 · 0.4초 · 회당 약 $0.00003"
 
 [llm.presets.d1-ultra]
 provider = "decisions"
@@ -148,15 +148,15 @@ model = "liquid/d1-ultra"
 api_key_env = "OPENROUTER_API_KEY"
 price_in = 0.042
 judge_threshold = 0.90
-judge_note = "50문장 중 48(깨진 22/24) · 0.51초 · 회당 약 $0.00001"
+judge_note = "기준 0.9: 일반 문장 오탐 8/72·놓침 5/25 · 0.5초 · 회당 약 $0.00001"
 
 [llm.presets.span-02]
 provider = "decisions"
 model = "respan/span-02"
 api_key_env = "OPENROUTER_API_KEY"
 price_in = 0.01
-judge_threshold = 0.65
-judge_note = "50문장 중 47(깨진 22/24) · 0.47초 · 회당 약 $0.000004"
+judge_threshold = 0.80
+judge_note = "기준 0.8: 일반 문장 오탐 8/72·놓침 5/25 · 0.47초 · 회당 약 $0.000004"
 
 [llm.presets.ms-decision]
 provider = "decisions"
@@ -164,7 +164,7 @@ model = "microsoft/microsoft-decision-1"
 api_key_env = "OPENROUTER_API_KEY"
 price_in = 0.042
 judge_threshold = 0.95
-judge_note = "Microsoft · 50문장 중 46(깨진 22/24) · 0.62초 · 회당 약 $0.00001"
+judge_note = "Microsoft · 기준 0.95: 일반 문장 오탐 5/72·놓침 4/25 · 0.63초 · 회당 약 $0.00001"
 
 [llm.presets.mercury-free]
 provider = "decisions"
@@ -172,7 +172,7 @@ model = "inception/mercury-decide:free"
 api_key_env = "OPENROUTER_API_KEY"
 free = true
 judge_threshold = 0.99
-judge_note = "무료 · 50문장 중 43(깨진 20/24, 3인칭 언급을 자주 부름으로) · 0.25초"
+judge_note = "무료 · 기준 0.99: 일반 문장 오탐 12/72·놓침 6/25(3인칭 언급을 자주 부름으로), 연달아 부르면 응답 없음 · 0.26초"
 
 [llm.presets.gemini-free]
 provider = "openai-compatible"

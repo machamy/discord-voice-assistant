@@ -660,7 +660,7 @@ mod tests {
         assert_eq!(c.judge.preset, "jev");
         assert!(c.judge.validate(&c).is_ok());
         assert_eq!(Judge::default().preset, "jev", "[judge]를 생략해도 같은 기본값");
-        assert_eq!(c.judge.threshold_for(&c.llm.presets["jev"]), 0.65);
+        assert_eq!(c.judge.threshold_for(&c.llm.presets["jev"]), 0.80);
         let mut j = c.judge.clone();
         j.threshold = Some(0.8);
         assert_eq!(j.threshold_for(&c.llm.presets["jev"]), 0.8);

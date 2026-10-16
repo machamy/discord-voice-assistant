@@ -721,6 +721,8 @@ struct JudgeTest {
     /// 저장하지 않고 이 프리셋·기준으로 시험(비우면 지금 설정)
     preset: Option<String>,
     threshold: Option<f64>,
+    /// 모델을 부르지 않고 보낼 요청 원문만(비용 없음)
+    dry: Option<bool>,
 }
 
 /// 판단 모델 시험 — 무료 프리셋은 비용 없음, 판단 전용 유료는 회당 0.0001달러 아래(하루 사용액에 더함)
@@ -764,12 +766,24 @@ async fn judge_test(State(app): State<AppRef>, headers: HeaderMap, Json(b): Json
         jd.on = true;
         jd.validate(&cfg).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
     }
+    // 보내는 요청 원문 — 실제 호출과 같은 함수로 만든다(키는 헤더라 여기 없음)
+    let preset = cfg.llm.presets.get(&jd.preset).ok_or_else(|| err(StatusCode::BAD_REQUEST, "없는 프리셋"))?;
+    // 원문만 보기도 실제 시험과 같은 조건 — 콘솔에서 끈 프리셋은 안 됨
+    if app.store.lock().unwrap().state.disabled_presets.contains(&jd.preset) {
+        return Err(err(StatusCode::BAD_REQUEST, format!("{}는 콘솔에서 꺼져 있어요", jd.preset)));
+    }
+    let (url, body) = crate::llm::judge_request(preset, &jp);
+    let request = json!({"url": url, "body": body});
+    let rule = hit.map(|h| json!({"character": h.character, "via": h.via, "word": h.word}));
+    if b.dry == Some(true) {
+        return Ok(Json(json!({"dry": true, "preset": jd.preset, "threshold": preset.is_decision().then(|| jd.threshold_for(preset)), "request": request, "rule": rule})).into_response());
+    }
     let v = crate::llm::judge(&app, &jd, &jd.preset, &jp, Duration::from_millis(jd.timeout_ms))
         .await
         .map_err(|e| err(StatusCode::BAD_GATEWAY, e.to_string()))?;
     Ok(Json(json!({
         "call": v.call, "ms": v.ms, "raw": v.raw, "preset": jd.preset, "p": v.p, "threshold": v.threshold,
-        "rule": hit.map(|h| json!({"character": h.character, "via": h.via, "word": h.word})),
+        "rule": rule, "request": request,
     }))
     .into_response())
 }

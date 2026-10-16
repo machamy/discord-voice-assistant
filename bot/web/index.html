@@ -157,14 +157,14 @@
       <div class="row"><div><label>켜기</label><select id="jdOn"><option value="true">켬</option><option value="false">끔</option></select></div>
         <div><label>모델</label><select id="jdPreset" onchange="judgeInfo()"></select></div>
         <div><label>부름 기준 확률</label><input id="jdThr" type="number" min="0.05" max="0.99" step="0.01" placeholder="추천값"></div>
-        <div><label>범위</label><select id="jdScope"><option value="애매할 때">애매할 때 — 비슷한 말·위험 별칭만</option><option value="이름도">이름도 — 헤이 없이 이름만 부른 것까지</option></select></div>
+        <div><label>범위</label><select id="jdScope"><option value="애매할 때">애매할 때 — 비슷한 말·위험 별칭만</option><option value="이름도">이름도 — 헤이 없이 이름만 부른 것까지(실측상 실제 호출을 많이 놓쳐 비추천)</option></select></div>
         <div><label>기다릴 시간(ms)</label><input id="jdTimeout" type="number" min="300" max="10000" step="100"></div></div>
       <div id="jdInfo" style="font-size:13px;margin:4px 0"></div>
       <table id="jdTbl" style="margin:6px 0"></table>
       <div class="dim" style="font-size:12px">판단 전용 모델은 "부름" 확률(0~1)을 내고, 기준 확률 이상이면 부른 것으로 봐요. 기준을 올리면 덜 부르고(잘못 부름↓), 내리면 더 잘 불러요(놓침↓). 비워 두면 모델별 추천값. 유료 판단 모델 비용은 하루 사용액에 더해지고, 상한에 닿으면 판단 없이 원래 규칙대로예요.<br>헤이를 붙인 호출·이어서 말하기·이모지 호출은 묻지 않아요. 모델이 늦거나 실패하면 원래 규칙대로 대답해요. 판단 결과는 대화 탭 받아쓰기 상황·호출별 지연에 보여요.</div>
       <div class="row" style="margin-top:8px"><button class="b" onclick="saveJudge()">저장</button><button class="g" onclick="resetJudge()">config.toml 기본값으로</button><span></span></div>
       <label style="margin-top:12px">시험 — 이 말이 캐릭터를 부른 것인지 물어보기(위에서 고른 모델·기준으로, 저장 안 함)</label>
-      <div class="row"><select id="jdChar" style="flex:0 0 120px"></select><input id="jdText" placeholder="예: 실장 회의 들어가셨대" maxlength="300"><button class="g" onclick="testJudge()">물어보기</button></div>
+      <div class="row"><select id="jdChar" style="flex:0 0 120px"></select><input id="jdText" placeholder="예: 실장 회의 들어가셨대" maxlength="300"><button class="g" onclick="testJudge()">물어보기</button><button class="g" onclick="testJudge(true)" title="모델을 부르지 않고 보낼 요청만 봐요(비용 없음)">원문만 보기</button></div>
       <textarea id="jdCtx" style="min-height:50px;margin-top:6px" placeholder="앞 대화(선택) — 줄마다 '이름: 말'"></textarea>
       <div id="jdOut"></div></div>
     <div class="card"><h2>두뇌 프리셋</h2><table id="presetTbl"></table>
@@ -519,12 +519,27 @@ async function saveJudge() {
   toast('판단 모델 저장'); loadJudge();
 }
 async function resetJudge() { await post('/api/judge', { reset: true }); toast('기본값으로'); loadJudge(); }
-async function testJudge() {
-  $('jdOut').innerHTML = '<p class="dim">물어보는 중…</p>';
+// 판단 모델에 보내는 요청 원문 — 판단 전용은 질문·기준·상황 글, OpenAI 호환은 system·user를 읽기 쉽게 + 본문 JSON 그대로
+function judgeRequestHtml(q) {
+  if (!q) return '';
+  const b = q.body || {}; const parts = [];
+  const blk = (t, s) => parts.push(`<label style="margin-top:6px">${esc(t)}</label><pre class="mono" style="white-space:pre-wrap;margin:2px 0">${esc(s ?? '')}</pre>`);
+  if (b.questions) {
+    const c = b.questions.call || {};
+    blk('질문(instructions)', c.instructions); blk('부름 기준(criteria.true)', c.criteria?.true); blk('아님 기준(criteria.false)', c.criteria?.false); blk('상황 글(state)', b.state);
+  } else if (b.messages) {
+    for (const m of b.messages) blk(m.role, m.content);
+  }
+  return `<details style="margin-top:6px"><summary>보내는 요청 원문 <span class="mono dim">POST ${esc(q.url)}</span></summary>${parts.join('')}
+    <details><summary class="dim">본문 JSON 그대로(키는 헤더라 여기 없음)</summary><pre class="mono" style="white-space:pre-wrap">${esc(JSON.stringify(b, null, 2))}</pre></details></details>`;
+}
+async function testJudge(dry) {
+  $('jdOut').innerHTML = `<p class="dim">${dry ? '원문 만드는 중…' : '물어보는 중…'}</p>`;
   try {
-    const r = await post('/api/judge-test', { character: val('jdChar'), text: val('jdText'), context: val('jdCtx'), preset: val('jdPreset'), threshold: judgeThr() });
+    const r = await post('/api/judge-test', { character: val('jdChar'), text: val('jdText'), context: val('jdCtx'), preset: val('jdPreset'), threshold: judgeThr(), dry: !!dry });
     const rule = r.rule ? `규칙 판정: ${esc(r.rule.character)}(${esc(r.rule.via)}, "${esc(r.rule.word)}")` : '규칙 판정: 호출 아님';
-    $('jdOut').innerHTML = `<p>${r.call ? '<span class="ok">📣 부른 것</span>' : '<span class="warn">🙅 부른 게 아님</span>'} · ${r.p != null ? `부름 확률 <b>${esc((r.p * 100).toFixed(1))}%</b> (기준 ${esc(Math.round(r.threshold * 100))}%) · ` : `답 "${esc(r.raw)}" · `}${esc(r.ms)}ms · <span class="mono">${esc(r.preset)}</span><br><span class="dim">${rule}</span></p>`;
+    if (r.dry) { $('jdOut').innerHTML = `<p class="dim">모델은 부르지 않았어요 · <span class="mono">${esc(r.preset)}</span>${r.threshold != null ? ` · 기준 ${esc(Math.round(r.threshold * 100))}%` : ''} · ${rule}</p>${judgeRequestHtml(r.request)}`; return; }
+    $('jdOut').innerHTML = `<p>${r.call ? '<span class="ok">📣 부른 것</span>' : '<span class="warn">🙅 부른 게 아님</span>'} · ${r.p != null ? `부름 확률 <b>${esc((r.p * 100).toFixed(1))}%</b> (기준 ${esc(Math.round(r.threshold * 100))}%) · ` : `답 "${esc(r.raw)}" · `}${esc(r.ms)}ms · <span class="mono">${esc(r.preset)}</span><br><span class="dim">${rule}</span></p>${judgeRequestHtml(r.request)}`;
   } catch (e) { $('jdOut').innerHTML = `<p class="bad">${esc(String(e.message || e))}</p>`; }
 }
 function renderChains() {
