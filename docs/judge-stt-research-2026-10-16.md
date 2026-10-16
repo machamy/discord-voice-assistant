@@ -81,10 +81,16 @@ OpenRouter Decisions API(`POST https://openrouter.ai/api/alpha/decisions`)는 �
 
 OpenRouter에도 받아쓰기 API(`/api/v1/audio/transcriptions`, 26개 모델)가 있다. 다만 키워드는 공급자별 옵션으로 그대로 넘겨야 하고 따로 검증되지 않아, 바이어싱이 핵심인 이 용도에는 직접 API가 더 확실하다.
 
-**추천(이름 오인식 해결 기준)**
-1. 지금 쓰는 로컬 faster-whisper에 `hotwords`("클짱 아짱")를 넣고, 남는 오인식은 호출어 자리에서만 치환한다. 비용은 0이다. 다음 단계로 한국어 파인튜닝 CT2 모델과 A/B 시험한다.
-2. 클라우드 폴백을 Deepgram에서 ElevenLabs Scribe v2 + keyterms로 바꾼다. 한국어 1위이고 시간당 약 $0.27이다.
-3. Naver CLOVA Speech 단문 + boostings(3자 이상 변형으로 등록)를 쓴다.
+**추천(이름 오인식 해결 기준)** — 이 프로젝트의 기존 실측과 대조해 고친 판(2026-10-16)
+- ❌ **로컬 Whisper `hotwords`·`initial_prompt`는 쓰지 않는다.** 이미 실측했다(SPEC F-20·F-49, `poc/stt-bench`).
+  - 호출어 없는 1초 조각에서 이름을 지어냈다: 271/382(71%). "헤이 클짱 헤이 아짱" 힌트로는 1초 63%, 1.5초 25%.
+  - 정상 문장에서도 오탐이 0건에서 4건으로 늘었고, CER 이득은 5.06%에서 4.92%로 거의 없었다.
+  - 이름 힌트는 오인식을 줄이는 대신 "안 부른 소리를 부른 것으로" 바꾼다. 위의 조사표는 일반론이라 이 위험을 반영하지 못했다.
+- ❌ **한국어 파인튜닝 Whisper(`ghost613`)도 아니다.** 실측 CER 12.57%로 지금 모델보다 나빴다(`docs/research-2026-10.html`).
+- 이름 오인식은 지금 구조로 처리한다: 받아쓰기는 힌트 없이 두고, 규칙(비슷한 말·위험 별칭)으로 넓게 잡은 뒤 판단 모델(F-59, Jev)이 문맥으로 걸러낸다.
+- 클라우드 STT의 keyterm(Scribe v2·Deepgram·CLOVA boostings)도 같은 종류의 바이어싱이라, 같은 환각 위험이 있다고 본다.
+  쓰려면 먼저 `poc/stt-bench`의 H3/H4 방식(호출어 없는 1~1.5초 조각에서 이름을 지어내는지)으로 오탐을 재야 한다. 그 전에는 추천하지 않는다.
+- 힌트 없이 쓸 때 한국어 품질만 보면, 클라우드 폴백 후보는 ElevenLabs Scribe v2(FLEURS-ko 1위)다. 지금 쓰는 Deepgram Nova-3는 같은 표에서 하위권이다.
 
 **미검증 항목**
 - CLOVA·RTZR의 독립 한국어 CER, CLOVA 단가
