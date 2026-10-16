@@ -733,6 +733,8 @@ async fn judge_decision(app: &AppRef, preset: &str, p: &Preset, threshold: f64, 
         let mut st = app.store.lock().unwrap();
         let d = st.day();
         d.usd += usd;
+        d.judge_calls += 1;
+        d.judge_usd += usd;
         let pu = d.presets.entry(preset.to_string()).or_default();
         pu.calls += 1;
         pu.input_tokens += v["usage"]["input_tokens"].as_u64().unwrap_or(0);
@@ -832,6 +834,7 @@ impl Drop for PaidGuard<'_> {
                 let mut st = self.app.store.lock().unwrap();
                 let d = st.day_of(&self.day);
                 *d.characters.entry(self.char_key.clone()).or_default() += 1;
+                *d.char_usd.entry(self.char_key.clone()).or_default() += self.est;
                 let pu = d.presets.entry(self.preset.clone()).or_default();
                 pu.calls += 1;
                 pu.usd += self.est;
@@ -967,6 +970,7 @@ async fn answer_with(
                     }
                     // 유료 호출 수·금액은 reserve_paid/settle_paid에서 반영했다
                     *d.characters.entry(char_key.to_string()).or_default() += 1;
+                    *d.char_usd.entry(char_key.to_string()).or_default() += usd;
                     let pu = d.presets.entry(name.clone()).or_default();
                     pu.calls += 1;
                     pu.input_tokens += raw.input + raw.cache_write;
@@ -1006,6 +1010,7 @@ async fn answer_with(
                         d.free_calls += 1;
                     }
                     *d.characters.entry(char_key.to_string()).or_default() += 1;
+                    *d.char_usd.entry(char_key.to_string()).or_default() += est_used.unwrap_or(0.0);
                     let pu = d.presets.entry(name.clone()).or_default();
                     pu.calls += 1;
                     pu.usd += est_used.unwrap_or(0.0);
@@ -1029,6 +1034,7 @@ async fn answer_with(
                             d.free_calls += 1;
                         }
                         *d.characters.entry(char_key.to_string()).or_default() += 1;
+                        *d.char_usd.entry(char_key.to_string()).or_default() += usd;
                         let pu = d.presets.entry(name.clone()).or_default();
                         pu.calls += 1;
                         pu.usd += usd;

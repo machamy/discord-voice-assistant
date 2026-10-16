@@ -137,6 +137,13 @@
         <p class="dim">한도에 닿으면 캐릭터의 대체 두뇌(무료)로 내려가요.</p>
       </div>
     </div>
+    <div class="card"><h2>비용 요약</h2>
+      <div class="row" style="margin-bottom:6px" id="usPeriod">
+        <button class="g" onclick="setUsPeriod(1)">오늘</button><button class="g" onclick="setUsPeriod(7)">최근 7일</button>
+        <button class="g" onclick="setUsPeriod('month')">이번 달</button><button class="g" onclick="setUsPeriod(31)">최근 31일</button><span></span></div>
+      <div id="usCost"></div>
+      <p class="dim" style="font-size:12px">금액은 두뇌(대답)·판단 모델 API 비용이에요. 받아쓰기(로컬 Whisper)·목소리(edge-tts·RVC)는 무료라 0원이에요.
+        Typecast·ElevenLabs·Azure·Deepgram처럼 유료 키를 넣는 공급자 비용은 여기 잡히지 않으니 각 서비스 대시보드에서 보세요. 캐릭터별 금액은 2026-10-17부터 기록돼요.</p></div>
     <div class="card"><h2>날짜별</h2><table id="usDays"></table></div>
   </section>
 
@@ -465,18 +472,55 @@ async function searchMembers() {
   $('memRes').innerHTML = r.members.map(m => `<div class="row"><span>${esc(m.name)} <span class="dim">@${esc(m.username)}${m.bot ? ' 🤖' : ''}</span></span><button class="g" onclick="ignore('user',${jsq(m.id)},true)">무시</button></div>`).join('') || '<span class="dim">없음</span>';
 }
 
+let US = null, US_PERIOD = 'month';
+function setUsPeriod(p) { US_PERIOD = p; renderUsCost(); }
+// 기간 안 날짜별 기록을 합쳐 모델별·캐릭터별 금액 표로
+function renderUsCost() {
+  if (!US) return;
+  const days = US.days.filter(d => US_PERIOD === 'month' ? d.date.startsWith(US.today.slice(0, 7))
+    : (new Date(US.today) - new Date(d.date)) / 86400000 < US_PERIOD);
+  const label = { 1: '오늘', 7: '최근 7일', month: '이번 달', 31: '최근 31일' }[US_PERIOD];
+  const pre = {}, chars = {}; let total = 0, judgeCalls = 0, judgeUsd = 0;
+  for (const d of days) {
+    const x = d.usage; total += x.usd; judgeCalls += x.judge_calls || 0; judgeUsd += x.judge_usd || 0;
+    for (const [k, p] of Object.entries(x.presets)) {
+      const a = pre[k] ||= { calls: 0, input: 0, output: 0, cache: 0, usd: 0 };
+      a.calls += p.calls; a.input += p.input_tokens; a.output += p.output_tokens; a.cache += p.cache_read_tokens; a.usd += p.usd;
+    }
+    for (const [k, n] of Object.entries(x.characters)) { const a = chars[k] ||= { calls: 0, usd: 0 }; a.calls += n; }
+    for (const [k, v] of Object.entries(x.char_usd || {})) { const a = chars[k] ||= { calls: 0, usd: 0 }; a.usd += v; }
+  }
+  // 화면에 넣는 값은 숫자여도 전부 esc
+  const money = v => esc(v >= 0.01 ? '$' + v.toFixed(3) : v > 0 ? '$' + v.toFixed(5) : '$0');
+  const pct = v => esc(total > 0 ? (v / total * 100).toFixed(1) + '%' : '-');
+  const krw = v => v > 0 ? ` <span class="dim">(약 ${esc(Math.round(v * 1400).toLocaleString())}원)</span>` : '';
+  const rows = Object.entries(pre).sort((a, b) => b[1].usd - a[1].usd || b[1].calls - a[1].calls).map(([k, a]) => {
+    const m = US.presets[k] || {};
+    const kind = m.decision ? '판단 모델' : '대답 두뇌';
+    return `<tr><td class="mono">${esc(k)}<br><span class="dim">${esc(m.model || '(설정에 없음)')}</span></td><td>${esc(kind)}${m.free ? ' · 무료' : ''}</td>
+      <td>${esc(a.calls)}</td><td style="font-size:12px">입 ${esc(a.input.toLocaleString())} · 출 ${esc(a.output.toLocaleString())}${a.cache ? ' · 캐시 ' + esc(a.cache.toLocaleString()) : ''}</td>
+      <td><b>${money(a.usd)}</b></td><td>${pct(a.usd)}</td></tr>`;
+  }).join('');
+  const crow = Object.entries(chars).sort((a, b) => b[1].usd - a[1].usd || b[1].calls - a[1].calls)
+    .map(([k, a]) => `<span class="pill">${esc(k)} ${esc(a.calls)}회 · ${money(a.usd)}</span>`).join('');
+  $('usCost').innerHTML = `<p><b>${esc(label)}</b> 합계 <b>${money(total)}</b>${krw(total)} · 날짜 ${esc(days.length)}일
+      · 판단 모델 ${esc(judgeCalls)}회 ${money(judgeUsd)}</p>
+    <table><tr><th>프리셋 · 모델</th><th>구분</th><th>호출</th><th>토큰</th><th>금액</th><th>비중</th></tr>${rows || '<tr><td colspan="6" class="dim">기록 없음</td></tr>'}</table>
+    <label style="margin-top:8px">캐릭터별 (대답)</label><div>${crow || '<span class="dim">기록 없음</span>'}</div>`;
+  for (const b of $('usPeriod').querySelectorAll('button')) b.className = b.textContent === label ? 'b' : 'g';
+}
 async function loadUsage() {
-  const u = await api('/api/usage');
+  const u = await api('/api/usage'); US = u; renderUsCost();
   const t = u.days.find(d => d.date === u.today)?.usage || { paid_calls: 0, free_calls: 0, usd: 0 };
-  $('usSum').innerHTML = `오늘 유료 <b>${t.paid_calls}</b>회 · <b>$${t.usd.toFixed(4)}</b> / 한도 ${u.limits.daily_calls}회 · $${u.limits.daily_usd}<br>오늘 무료 ${t.free_calls}회
-    <br>이번 달 유료 ${u.month.paid_calls}회 · 무료 ${u.month.free_calls}회 · <b>$${u.month.usd.toFixed(3)}</b>
+  $('usSum').innerHTML = `오늘 유료 <b>${esc(t.paid_calls)}</b>회 · <b>$${esc(t.usd.toFixed(4))}</b> / 한도 ${esc(u.limits.daily_calls)}회 · $${esc(u.limits.daily_usd)}<br>오늘 무료 ${esc(t.free_calls)}회
+    <br>이번 달 유료 ${esc(u.month.paid_calls)}회 · 무료 ${esc(u.month.free_calls)}회 · <b>$${esc(u.month.usd.toFixed(3))}</b>
     ${Object.entries(u.ratelimits).map(([k, r]) => `<br><span class="dim">${esc(k)} 남은 요청 ${esc(r.remaining_requests ?? '?')} · 토큰 ${esc(r.remaining_tokens ?? '?')} (${esc(r.at)})</span>`).join('')}`;
   $('limCalls').value = u.limits.daily_calls; $('limUsd').value = u.limits.daily_usd;
   $('usDays').innerHTML = '<tr><th>날짜</th><th>유료</th><th>무료</th><th>금액</th><th>프리셋별</th><th>캐릭터별</th></tr>' + u.days.map(d => {
     const x = d.usage;
-    return `<tr><td>${d.date}</td><td>${x.paid_calls}</td><td>${x.free_calls}</td><td>$${x.usd.toFixed(4)}</td>
-      <td>${Object.entries(x.presets).map(([k, p]) => `<span class="pill">${esc(k)} ${p.calls}회 · 입${p.input_tokens} 출${p.output_tokens}${p.cache_read_tokens ? ' 캐시' + p.cache_read_tokens : ''}</span>`).join('')}</td>
-      <td>${Object.entries(x.characters).map(([k, n]) => `<span class="pill">${esc(k)} ${n}</span>`).join('')}</td></tr>`;
+    return `<tr><td>${esc(d.date)}</td><td>${esc(x.paid_calls)}</td><td>${esc(x.free_calls)}</td><td>$${esc(x.usd.toFixed(4))}</td>
+      <td>${Object.entries(x.presets).map(([k, p]) => `<span class="pill">${esc(k)} ${esc(p.calls)}회 · $${esc((+p.usd).toFixed(4))} · 입${esc(p.input_tokens)} 출${esc(p.output_tokens)}${p.cache_read_tokens ? ' 캐시' + esc(p.cache_read_tokens) : ''}</span>`).join('')}</td>
+      <td>${Object.entries(x.characters).map(([k, n]) => `<span class="pill">${esc(k)} ${esc(n)}회${x.char_usd?.[k] != null ? ' · $' + esc((+x.char_usd[k]).toFixed(4)) : ''}</span>`).join('')}</td></tr>`;
   }).join('');
 }
 async function saveLimits() { await post('/api/limits', { daily_calls: +val('limCalls'), daily_usd: +val('limUsd') }); toast('한도 저장'); loadUsage(); }

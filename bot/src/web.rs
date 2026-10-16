@@ -990,7 +990,16 @@ async fn usage(State(app): State<AppRef>, headers: HeaderMap) -> R {
     let st = app.store.lock().unwrap();
     let days: Vec<(&String, &crate::store::DayUsage)> = st.state.usage.iter().rev().take(31).collect();
     let month = st.month_usd();
+    // 비용 요약에서 프리셋을 대답 두뇌·판단 모델로 나누고 모델 이름을 보여 주려고(값만, 키 없음)
+    let cfg = app.cfg();
+    let presets: BTreeMap<String, Value> = cfg
+        .llm
+        .presets
+        .iter()
+        .map(|(k, p)| (k.clone(), json!({"model": p.model, "provider": p.provider, "decision": p.is_decision(), "free": p.free, "price_in": p.price_in, "price_out": p.price_out})))
+        .collect();
     Ok(Json(json!({
+        "presets": presets,
         "today": crate::store::today(),
         "days": days.into_iter().map(|(k, v)| json!({"date": k, "usage": v})).collect::<Vec<_>>(),
         "month": {"paid_calls": month.0, "free_calls": month.1, "usd": month.2},

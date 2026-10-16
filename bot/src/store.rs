@@ -114,6 +114,11 @@ pub struct DayUsage {
     pub presets: BTreeMap<String, PresetUsage>,
     /// 캐릭터 → 호출 수
     pub characters: BTreeMap<String, u32>,
+    /// 캐릭터 → 대답 비용(USD) — 웹 콘솔 비용 요약(2026-10-17부터 기록)
+    pub char_usd: BTreeMap<String, f64>,
+    /// 판단 모델(F-54·F-59) 호출 수·비용 — 프리셋 원장에도 같이 들어간다
+    pub judge_calls: u32,
+    pub judge_usd: f64,
     /// 상한 도달 안내를 한 서버 — SPEC F-32 "한 번 알린다"
     pub cap_notified: BTreeSet<u64>,
     /// 진행 중인 유료 호출의 예상 비용(예약). 저장하지 않는다
