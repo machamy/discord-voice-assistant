@@ -562,11 +562,27 @@ pub struct Verdict {
     pub call: bool,
     pub ms: u64,
     pub raw: String,
+    /// 판단 전용 모델이 낸 "부름" 확률(OpenAI 호환 YES/NO는 없음)
+    pub p: Option<f64>,
+    /// 실제로 쓴 부름 기준 확률
+    pub threshold: Option<f64>,
+}
+
+/// 판단 모델에 보낼 글 — OpenAI 호환(system·user)과 판단 전용(질문·기준·상황) 두 모양
+pub struct JudgePrompt {
+    pub system: String,
+    /// OpenAI 호환용(마지막에 질문 줄)
+    pub user: String,
+    /// 판단 전용 모델용 상황 글(질문 줄 없이)
+    pub state: String,
+    pub instructions: String,
+    pub yes: String,
+    pub no: String,
 }
 
 /// 판단 모델에 보낼 글 — 최근 대화 몇 줄 + 마지막 발화 + 호출어로 들린 부분
 /// variants: 이 캐릭터 이름이 받아쓰기에 실제로 적혀 온 변형(호출어·추가 호출어·위험 별칭)
-pub fn judge_prompt(names: &[String], ch_name: &str, variants: &[String], word: &str, lines: &[Line], speaker: &str, text: &str) -> (String, String) {
+pub fn judge_prompt(names: &[String], ch_name: &str, variants: &[String], word: &str, lines: &[Line], speaker: &str, text: &str) -> JudgePrompt {
     let vars = if variants.is_empty() { format!("'{ch_name}'") } else { variants.iter().take(12).map(|v| format!("'{v}'")).collect::<Vec<_>>().join("·") };
     let system = format!(
         "너는 음성 채팅 받아쓰기 판정기다. 디스코드 음성 채널에 AI 캐릭터 {}이(가) 있고, 사람들은 이름을 불러 말을 건다.\n\
@@ -585,21 +601,40 @@ pub fn judge_prompt(names: &[String], ch_name: &str, variants: &[String], word: 
     for l in lines {
         user.push_str(&fmt_line(l));
     }
-    user.push_str(&format!("\n마지막 발화 — {speaker}: \"{text}\"\n(호출어로 들린 부분: \"{word}\")\n이 말이 '{ch_name}'를 부른 것인가?"));
-    (system, user)
+    user.push_str(&format!("\n마지막 발화 — {speaker}: \"{text}\"\n(호출어로 들린 부분: \"{word}\")"));
+    // 판단 전용 모델용 — 2026-10-16 실측(처음 보는 문장 26 + 받아쓰기 깨진 문장 24)에 쓴 문구 그대로
+    let names_q = names.iter().map(|n| format!("'{n}'")).collect::<Vec<_>>().join("·");
+    let instructions = format!(
+        "디스코드 음성 채팅 받아쓰기다. 채널에 AI 캐릭터 {names_q}이(가) 있고 사람들은 이름을 불러 말을 건다. \
+         받아쓰기는 자주 틀려서 이름이 비슷한 소리의 다른 낱말로 적힌다. '{ch_name}'은(는) {vars}처럼 적히기도 한다. \
+         마지막 발화의 '{word}'가 '{ch_name}'를 가리키고, 이 사람이 '{ch_name}'에게 직접 말을 건 것인가?"
+    );
+    let yes = format!(
+        "'{word}'를 '{ch_name}'(으)로 바꿔 읽으면 AI에게 직접 말을 거는 자연스러운 문장이 된다(질문·부탁·말 걸기). 사전에 없는 말이거나 원래 뜻으로 읽히지 않으면 이쪽."
+    );
+    let no = format!(
+        "'{word}'를 원래 뜻 그대로 쓴 것이 분명하다(그 낱말의 뜻을 묻는 말, 앞 대화가 그 뜻의 얘기를 하던 중 포함). 또는 캐릭터를 3인칭으로 언급만 한다."
+    );
+    let user_q = format!("{user}
+이 말이 '{ch_name}'를 부른 것인가?");
+    JudgePrompt { system, user: user_q, state: user, instructions, yes, no }
 }
 
-/// 무료 OpenAI 호환 프리셋에 YES/NO를 묻는다 — 스트리밍 없이 한 번에
-pub async fn judge(app: &AppRef, preset: &str, system: &str, user: &str, timeout: Duration) -> Result<Verdict> {
+/// 판단 모델에 묻는다 — 무료 OpenAI 호환은 YES/NO 한 단어, 판단 전용(decisions)은 "부름" 확률을 받아 기준과 비교
+pub async fn judge(app: &AppRef, jd: &crate::config::Judge, preset: &str, jp: &JudgePrompt, timeout: Duration) -> Result<Verdict> {
     let cfg = app.cfg();
     let p = cfg.llm.presets.get(preset).ok_or_else(|| anyhow!("판단 프리셋 {preset} 없음"))?;
-    // 어떤 경로로 불려도(시험 포함) 무료·학습 안 함·OpenAI 호환·켜져 있음만 — 비용·데이터 규칙을 여기서 한 번 더
-    if p.provider == "anthropic" || !p.free || p.trains_on_input {
-        bail!("판단 모델은 무료·학습 안 하는 OpenAI 호환 프리셋만({preset})");
+    // 어떤 경로로 불려도(시험 포함) 학습 안 함·켜져 있음, 그리고 무료 OpenAI 호환이거나 판단 전용만 — 비용·데이터 규칙을 여기서 한 번 더
+    if p.trains_on_input || !(p.is_decision() || (p.free && p.provider != "anthropic")) {
+        bail!("판단 모델은 학습 안 하는 무료 OpenAI 호환 프리셋이나 판단 전용 프리셋만({preset})");
     }
     if app.store.lock().unwrap().state.disabled_presets.contains(preset) {
         bail!("{preset}는 콘솔에서 꺼져 있어요");
     }
+    if p.is_decision() {
+        return judge_decision(app, preset, p, jd.threshold_for(p), jp, timeout).await;
+    }
+    let (system, user) = (jp.system.as_str(), jp.user.as_str());
     let t = Instant::now();
     let base = p.base_url.clone().unwrap_or_else(|| "https://api.openai.com/v1".into());
     let mut body = json!({
@@ -641,7 +676,63 @@ pub async fn judge(app: &AppRef, preset: &str, system: &str, user: &str, timeout
     } else {
         bail!("판단 {preset} 답이 YES/NO가 아님: {}", raw.chars().take(40).collect::<String>());
     };
-    Ok(Verdict { call, ms: t.elapsed().as_millis() as u64, raw })
+    Ok(Verdict { call, ms: t.elapsed().as_millis() as u64, raw, p: None, threshold: None })
+}
+
+/// 판단 전용 모델(OpenRouter Decisions API, noul 질문) — "부름" 확률 하나를 받는다. SPEC F-59
+/// 유료면 오늘 상한에 닿았을 때 부르지 않고(원래 규칙대로), 실제 비용(usage.cost)을 하루 사용액·프리셋 원장에 더한다.
+/// 회당 0.0001달러 아래라 호출 수 상한(paid_calls)에는 세지 않는다 — 대답 호출 몫을 깎지 않게
+async fn judge_decision(app: &AppRef, preset: &str, p: &Preset, threshold: f64, jp: &JudgePrompt, timeout: Duration) -> Result<Verdict> {
+    if !p.free && capped(app) {
+        bail!("오늘 유료 상한에 닿아 판단 전용 모델({preset})은 안 불러요");
+    }
+    let t = Instant::now();
+    let base = p.base_url.clone().unwrap_or_else(|| "https://openrouter.ai/api".into());
+    let body = json!({
+        "model": p.model,
+        "state": jp.state,
+        "questions": {"call": {"type": "noul", "instructions": jp.instructions, "criteria": {"true": jp.yes, "false": jp.no}}},
+        // 입력을 학습·보관하지 않는 공급자로만
+        "provider": {"data_collection": "deny"},
+    });
+    let key = std::env::var(p.key_env()).map_err(|_| anyhow!("{} 없음", p.key_env()))?;
+    let r = app
+        .http
+        .post(format!("{}/alpha/decisions", base.trim_end_matches('/')))
+        .timeout(timeout)
+        .bearer_auth(key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| anyhow!("판단 {preset} 요청 실패: {}", if e.is_timeout() { "시간 초과".to_string() } else { e.to_string() }))?;
+    let status = r.status();
+    let v: Value = r.json().await.map_err(|e| anyhow!("판단 {preset} 응답 형식: {e}"))?;
+    if !status.is_success() {
+        bail!("판단 {preset} HTTP {status} {}", err_kind(&v));
+    }
+    // 요청이 성공했으면 과금됐다 — 확률을 못 읽어도 비용은 먼저 적는다
+    let cost = v["usage"]["cost"].as_f64().filter(|c| c.is_finite() && *c >= 0.0);
+    if !p.free {
+        // 비용이 안 왔으면 입력 토큰 × 단가로(그것도 없으면 2000토큰 기준 최대치)
+        let usd = cost.unwrap_or_else(|| v["usage"]["input_tokens"].as_f64().unwrap_or(2000.0) * p.price_in / 1e6);
+        let mut st = app.store.lock().unwrap();
+        let d = st.day();
+        d.usd += usd;
+        let pu = d.presets.entry(preset.to_string()).or_default();
+        pu.calls += 1;
+        pu.input_tokens += v["usage"]["input_tokens"].as_u64().unwrap_or(0);
+        pu.usd += usd;
+        drop(st);
+        app.save_store();
+    }
+    let prob = v["answers"]["call"]["noul"].as_f64().filter(|x| x.is_finite() && (0.0..=1.0).contains(x)).ok_or_else(|| anyhow!("판단 {preset} 답에 확률이 없음"))?;
+    Ok(Verdict {
+        call: prob >= threshold,
+        ms: t.elapsed().as_millis() as u64,
+        raw: format!("{:.0}%", prob * 100.0),
+        p: Some(prob),
+        threshold: Some(threshold),
+    })
 }
 
 /// 일부 오픈 모델(Qwen 등)은 생각을 <think>…</think>로 본문에 섞는다 — 대답만 남긴다

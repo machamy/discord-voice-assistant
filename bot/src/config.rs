@@ -40,11 +40,13 @@ pub struct Judge {
     pub scope: String,
     /// 이 시간 안에 답이 없으면 판단 없이 원래 규칙대로
     pub timeout_ms: u64,
+    /// 판단 전용 모델(decisions)이 "부름" 확률을 이 값 이상으로 내면 부른 것으로. 비우면 프리셋 추천값(judge_threshold)
+    pub threshold: Option<f64>,
 }
 
 impl Default for Judge {
     fn default() -> Self {
-        Self { on: true, preset: "groq-fast".into(), scope: "애매할 때".into(), timeout_ms: 2500 }
+        Self { on: true, preset: "jev".into(), scope: "애매할 때".into(), timeout_ms: 2500, threshold: None }
     }
 }
 
@@ -58,17 +60,27 @@ impl Judge {
         if !(300..=10_000).contains(&self.timeout_ms) {
             return Err("판단 대기 시간은 300~10000ms".into());
         }
+        if self.threshold.is_some_and(|t| !(0.05..=0.99).contains(&t)) {
+            return Err("부름 기준 확률은 0.05~0.99".into());
+        }
         // 꺼 두었으면 프리셋은 따지지 않는다(나중에 켤 때 검사)
         if !self.on {
             return Ok(());
         }
         match cfg.llm.presets.get(&self.preset) {
             None => Err(format!("판단 모델 프리셋 '{}' 없음", self.preset)),
-            Some(p) if !p.free => Err(format!("판단 모델은 무료 프리셋만('{}'는 유료)", self.preset)),
             Some(p) if p.trains_on_input => Err(format!("판단 모델에 입력을 학습에 쓰는 등급('{}')은 못 씀", self.preset)),
+            // 판단 전용 모델은 유료여도 된다(회당 0.0001달러 아래, 하루 사용액에 더해지고 상한에 닿으면 안 부름)
+            Some(p) if p.is_decision() => Ok(()),
+            Some(p) if !p.free => Err(format!("판단 모델은 무료 프리셋이나 판단 전용 프리셋만('{}'는 유료)", self.preset)),
             Some(p) if p.provider == "anthropic" => Err("판단 모델은 OpenAI 호환 프리셋만".into()),
             _ => Ok(()),
         }
+    }
+
+    /// 실제로 쓸 부름 기준 확률 — 직접 정한 값 > 프리셋 추천값 > 0.5
+    pub fn threshold_for(&self, p: &Preset) -> f64 {
+        self.threshold.or(p.judge_threshold).unwrap_or(0.5)
     }
 }
 
@@ -167,6 +179,12 @@ pub struct Preset {
     /// OpenAI 호환 요청 본문에 그대로 더할 값(예: Groq include_reasoning = false)
     #[serde(default)]
     pub extra: Option<serde_json::Map<String, serde_json::Value>>,
+    /// 판단 모델로 쓸 때 추천 부름 기준 확률(decisions 공급자) — SPEC F-59
+    #[serde(default)]
+    pub judge_threshold: Option<f64>,
+    /// 판단 모델 고르기 화면에 같이 보여 줄 실측 메모(정확도·속도)
+    #[serde(default)]
+    pub judge_note: Option<String>,
 }
 
 fn yes() -> bool {
@@ -203,8 +221,13 @@ impl Preset {
         }
         match self.provider.as_str() {
             "anthropic" => "ANTHROPIC_API_KEY".into(),
+            "decisions" => "OPENROUTER_API_KEY".into(),
             _ => "OPENAI_API_KEY".into(),
         }
+    }
+    /// 판단 전용 모델(OpenRouter Decisions API) — 글을 만들지 않고 정한 답의 확률만 낸다. 대답 두뇌로는 못 쓴다
+    pub fn is_decision(&self) -> bool {
+        self.provider == "decisions"
     }
     pub fn has_key(&self) -> bool {
         // 로컬 Ollama 같은 키 없는 공급자는 api_key_env = "" 로 표시
@@ -295,12 +318,16 @@ pub fn validate_character(k: &str, ch: &Character, presets: &BTreeMap<String, Pr
     if ch.emoji.chars().count() > 8 {
         return Err(format!("캐릭터 {k}: 이모지는 8자 이내"));
     }
-    if !presets.contains_key(&ch.brain) {
-        return Err(format!("캐릭터 {k}: 두뇌 프리셋 '{}' 없음", ch.brain));
+    match presets.get(&ch.brain) {
+        None => return Err(format!("캐릭터 {k}: 두뇌 프리셋 '{}' 없음", ch.brain)),
+        Some(p) if p.is_decision() => return Err(format!("캐릭터 {k}: '{}'는 판단 전용이라 두뇌로 못 씀", ch.brain)),
+        _ => {}
     }
     if let Some(f) = &ch.fallback {
-        if !presets.contains_key(f) {
-            return Err(format!("캐릭터 {k}: 대체 프리셋 '{f}' 없음"));
+        match presets.get(f) {
+            None => return Err(format!("캐릭터 {k}: 대체 프리셋 '{f}' 없음")),
+            Some(p) if p.is_decision() => return Err(format!("캐릭터 {k}: '{f}'는 판단 전용이라 대체 두뇌로 못 씀")),
+            _ => {}
         }
     }
     if ch.wake.is_empty() || ch.wake.len() > 50 || ch.wake.iter().any(|w| w.trim().is_empty() || w.chars().count() > 20) {
@@ -523,8 +550,17 @@ impl Config {
             if p.max_tokens.is_some_and(|m| !(1..=8192).contains(&m)) {
                 bail!("프리셋 {k}: max_tokens는 1~8192");
             }
-            if !matches!(p.provider.as_str(), "anthropic" | "openai" | "openai-compatible") {
+            if !matches!(p.provider.as_str(), "anthropic" | "openai" | "openai-compatible" | "decisions") {
                 bail!("프리셋 {k}: 알 수 없는 공급자 '{}'", p.provider);
+            }
+            if p.judge_threshold.is_some_and(|t| !(0.05..=0.99).contains(&t)) {
+                bail!("프리셋 {k}: judge_threshold는 0.05~0.99");
+            }
+            if p.judge_note.as_ref().is_some_and(|n| n.chars().count() > 200) {
+                bail!("프리셋 {k}: judge_note는 200자 이내");
+            }
+            if p.is_decision() && (p.reasoning_effort.is_some() || p.extra.is_some()) {
+                bail!("프리셋 {k}: decisions 공급자는 reasoning_effort·extra를 받지 않음");
             }
             if p.provider == "openai-compatible" && p.base_url.is_none() {
                 bail!("프리셋 {k}: openai-compatible은 base_url 필요");
@@ -559,6 +595,7 @@ impl Config {
             match self.llm.presets.get(f) {
                 None => bail!("free_chain: 프리셋 '{f}' 없음"),
                 Some(p) if !p.free => bail!("free_chain: '{f}'는 무료 프리셋이 아님"),
+                Some(p) if p.is_decision() => bail!("free_chain: '{f}'는 판단 전용이라 대답 두뇌로 못 씀"),
                 // 학습에 쓰이는 무료 등급은 주인이 캐릭터 두뇌로 직접 고를 때만(SPEC N-12) — 자동 대체로는 안 씀
                 Some(p) if p.trains_on_input => bail!("free_chain: '{f}'는 입력을 학습에 쓰는 등급이라 자동 대체에 넣을 수 없음"),
                 _ => {}
@@ -613,6 +650,43 @@ mod tests {
         x.style = "성격".into();
         x.persona = " ".into();
         assert!(validate_character("젬짱", &x, &c.llm.presets).is_err());
+    }
+
+    #[test]
+    fn decision_presets() {
+        let c: Config = toml::from_str(include_str!("../config.example.toml")).expect("형식");
+        c.validate().expect("예시 config 검증");
+        // 기본 판단 모델은 판단 전용(유료지만 허용), 기준 확률은 프리셋 추천값
+        assert_eq!(c.judge.preset, "jev");
+        assert!(c.judge.validate(&c).is_ok());
+        assert_eq!(Judge::default().preset, "jev", "[judge]를 생략해도 같은 기본값");
+        assert_eq!(c.judge.threshold_for(&c.llm.presets["jev"]), 0.65);
+        let mut j = c.judge.clone();
+        j.threshold = Some(0.8);
+        assert_eq!(j.threshold_for(&c.llm.presets["jev"]), 0.8);
+        j.threshold = Some(1.0);
+        assert!(j.validate(&c).is_err(), "기준 확률 범위");
+        j.threshold = None;
+        j.preset = "groq-fast".into();
+        assert!(j.validate(&c).is_ok(), "무료 OpenAI 호환도 여전히 됨");
+        assert_eq!(j.threshold_for(&c.llm.presets["groq-fast"]), 0.5);
+        // 판단 전용은 대답 두뇌·대체 두뇌·무료 체인으로 못 씀
+        let mut x = c.characters["클짱"].clone();
+        x.brain = "jev".into();
+        assert!(validate_character("젬짱", &x, &c.llm.presets).is_err());
+        x.brain = "haiku".into();
+        x.fallback = Some("mercury-free".into());
+        assert!(validate_character("젬짱", &x, &c.llm.presets).is_err());
+        let mut c2 = c.clone();
+        c2.llm.free_chain = vec!["mercury-free".into()];
+        assert!(c2.validate().is_err());
+        // 판단 전용에 reasoning_effort·extra 금지, 키 이름 기본값
+        let mut c3 = c.clone();
+        c3.llm.presets.get_mut("jev").unwrap().reasoning_effort = Some("low".into());
+        assert!(c3.validate().is_err());
+        let mut p = c.llm.presets["jev"].clone();
+        p.api_key_env = None;
+        assert_eq!(p.key_env(), "OPENROUTER_API_KEY");
     }
 
     #[test]

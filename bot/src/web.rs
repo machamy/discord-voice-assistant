@@ -434,7 +434,7 @@ async fn guild_get(State(app): State<AppRef>, headers: HeaderMap, Path(g): Path<
     let ids = |s: &std::collections::BTreeSet<u64>| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
     Ok(Json(json!({
         "characters": chars,
-        "presets": cfg.llm.presets.iter().map(|(k, p)| (k.clone(), json!({"model": p.model, "free": p.free, "owner_only": p.owner_only, "has_key": p.has_key(), "trains_on_input": p.trains_on_input}))).collect::<BTreeMap<_, _>>(),
+        "presets": cfg.llm.presets.iter().map(|(k, p)| (k.clone(), json!({"model": p.model, "free": p.free, "owner_only": p.owner_only, "has_key": p.has_key(), "trains_on_input": p.trains_on_input, "decision": p.is_decision()}))).collect::<BTreeMap<_, _>>(),
         "ignore_users": ids(&gs.ignore_users),
         "ignore_roles": ids(&gs.ignore_roles),
         "self_ignored": ids(&gs.self_ignored),
@@ -478,8 +478,10 @@ async fn char_set(State(app): State<AppRef>, headers: HeaderMap, Path((g, key)):
         return Err(err(StatusCode::NOT_FOUND, "캐릭터 없음"));
     }
     for p in b.brain.iter().chain(b.fallback.iter().filter(|f| !f.is_empty())) {
-        if !cfg.llm.presets.contains_key(p) {
-            return Err(err(StatusCode::BAD_REQUEST, format!("프리셋 {p} 없음")));
+        match cfg.llm.presets.get(p) {
+            None => return Err(err(StatusCode::BAD_REQUEST, format!("프리셋 {p} 없음"))),
+            Some(x) if x.is_decision() => return Err(err(StatusCode::BAD_REQUEST, format!("{p}는 판단 전용이라 두뇌로 못 써요"))),
+            _ => {}
         }
     }
     if b.persona.as_ref().is_some_and(|p| p.chars().count() > 3000) || b.persona_polite.as_ref().is_some_and(|p| p.chars().count() > 3000) {
@@ -598,6 +600,9 @@ async fn char_upsert(State(app): State<AppRef>, headers: HeaderMap, Json(b): Jso
         if p.trains_on_input {
             return Err(err(StatusCode::BAD_REQUEST, "입력을 학습에 쓰는 무료 등급은 웹에서 캐릭터 두뇌로 못 골라요"));
         }
+        if p.is_decision() {
+            return Err(err(StatusCode::BAD_REQUEST, format!("{name}는 판단 전용이라 두뇌로 못 써요")));
+        }
     }
     let ch = crate::config::Character {
         name: b.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| key.clone()),
@@ -675,9 +680,12 @@ async fn judge_get(State(app): State<AppRef>, headers: HeaderMap) -> R {
         .llm
         .presets
         .iter()
-        // 무료·학습 안 함·OpenAI 호환·콘솔에서 안 끈 것만 고를 수 있게
-        .filter(|(k, p)| p.free && !p.trains_on_input && p.provider != "anthropic" && !disabled.contains(*k))
-        .map(|(k, p)| json!({"name": k, "model": p.model, "has_key": p.has_key()}))
+        // 학습 안 함·콘솔에서 안 끈 것 중 무료 OpenAI 호환이거나 판단 전용인 것만 고를 수 있게
+        .filter(|(k, p)| !p.trains_on_input && (p.is_decision() || (p.free && p.provider != "anthropic")) && !disabled.contains(*k))
+        .map(|(k, p)| {
+            json!({"name": k, "model": p.model, "has_key": p.has_key(), "decision": p.is_decision(), "free": p.free,
+                   "price_in": p.price_in, "threshold": p.judge_threshold, "note": p.judge_note})
+        })
         .collect();
     Ok(Json(json!({"judge": app.judge(), "default": cfg.judge, "presets": presets, "scopes": crate::config::JUDGE_SCOPES})).into_response())
 }
@@ -710,9 +718,12 @@ struct JudgeTest {
     text: String,
     /// 앞 대화(줄마다 "이름: 말")
     context: Option<String>,
+    /// 저장하지 않고 이 프리셋·기준으로 시험(비우면 지금 설정)
+    preset: Option<String>,
+    threshold: Option<f64>,
 }
 
-/// 판단 모델 시험 — 무료 프리셋만이라 비용 없음
+/// 판단 모델 시험 — 무료 프리셋은 비용 없음, 판단 전용 유료는 회당 0.0001달러 아래(하루 사용액에 더함)
 async fn judge_test(State(app): State<AppRef>, headers: HeaderMap, Json(b): Json<JudgeTest>) -> R {
     authed(&app, &headers)?;
     let cfg = app.cfg();
@@ -741,13 +752,23 @@ async fn judge_test(State(app): State<AppRef>, headers: HeaderMap, Json(b): Json
     let word = hit.as_ref().filter(|h| h.character == b.character).map(|h| h.word.clone()).unwrap_or_else(|| ch.name.clone());
     let names: Vec<String> = cfg.characters.values().map(|c| c.name.clone()).collect();
     let variants = crate::voice::name_variants(&app, &b.character);
-    let (system, user) = crate::llm::judge_prompt(&names, &ch.name, &variants, &word, &lines, "시험", text);
-    let jd = app.judge();
-    let v = crate::llm::judge(&app, &jd.preset, &system, &user, Duration::from_millis(jd.timeout_ms))
+    let jp = crate::llm::judge_prompt(&names, &ch.name, &variants, &word, &lines, "시험", text);
+    let mut jd = app.judge();
+    // 저장하지 않고 고른 모델·기준으로 — 기준만 바꿔도 적용하고, 바꾼 조합은 저장 때와 같은 검사를 거친다
+    let pick = b.preset.filter(|p| !p.is_empty());
+    if pick.is_some() || b.threshold.is_some() {
+        if let Some(p) = pick {
+            jd.preset = p;
+        }
+        jd.threshold = b.threshold;
+        jd.on = true;
+        jd.validate(&cfg).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    }
+    let v = crate::llm::judge(&app, &jd, &jd.preset, &jp, Duration::from_millis(jd.timeout_ms))
         .await
         .map_err(|e| err(StatusCode::BAD_GATEWAY, e.to_string()))?;
     Ok(Json(json!({
-        "call": v.call, "ms": v.ms, "raw": v.raw, "preset": jd.preset,
+        "call": v.call, "ms": v.ms, "raw": v.raw, "preset": jd.preset, "p": v.p, "threshold": v.threshold,
         "rule": hit.map(|h| json!({"character": h.character, "via": h.via, "word": h.word})),
     }))
     .into_response())
@@ -989,7 +1010,7 @@ async fn providers(State(app): State<AppRef>, headers: HeaderMap) -> R {
     authed(&app, &headers)?;
     let cfg = app.cfg();
     let disabled = app.store.lock().unwrap().state.disabled_presets.clone();
-    let keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "DEEPGRAM_API_KEY", "AZURE_SPEECH_KEY", "ELEVENLABS_API_KEY", "TYPECAST_API_KEY", "DISCORD_CLIENT_SECRET"];
+    let keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY", "DEEPGRAM_API_KEY", "AZURE_SPEECH_KEY", "ELEVENLABS_API_KEY", "TYPECAST_API_KEY", "OPENROUTER_API_KEY", "DISCORD_CLIENT_SECRET"];
     let key_state: BTreeMap<&str, bool> = keys.iter().map(|k| (*k, std::env::var(k).map(|v| !v.trim().is_empty()).unwrap_or(false))).collect();
     Ok(Json(json!({
         "stt_chain": app.stt_chain(),
@@ -999,7 +1020,7 @@ async fn providers(State(app): State<AppRef>, headers: HeaderMap) -> R {
         "tts_default": cfg.tts.chain,
         "stt_known": ["local-whisper:cuda:large-v3-turbo", "local-whisper:cpu:small", "local-whisper:cpu:medium", "groq-whisper", "groq-whisper-turbo", "deepgram", "openai-transcribe"],
         "tts_known": crate::config::TTS_PROVIDERS,
-        "presets": cfg.llm.presets.iter().map(|(k, p)| (k.clone(), json!({"provider": p.provider, "model": p.model, "free": p.free, "owner_only": p.owner_only, "trains_on_input": p.trains_on_input, "has_key": p.has_key(), "key_env": p.key_env(), "disabled": disabled.contains(k), "effort": p.reasoning_effort, "price_in": p.price_in, "price_out": p.price_out}))).collect::<BTreeMap<_, _>>(),
+        "presets": cfg.llm.presets.iter().map(|(k, p)| (k.clone(), json!({"provider": p.provider, "model": p.model, "free": p.free, "owner_only": p.owner_only, "trains_on_input": p.trains_on_input, "has_key": p.has_key(), "key_env": p.key_env(), "disabled": disabled.contains(k), "effort": p.reasoning_effort, "price_in": p.price_in, "price_out": p.price_out, "decision": p.is_decision()}))).collect::<BTreeMap<_, _>>(),
         "free_chain": cfg.llm.free_chain,
         "keys": key_state, // 값은 절대 내보내지 않는다 — SPEC N-10
     }))
@@ -1074,8 +1095,10 @@ struct LlmTestReq {
 /// 두뇌 시험 — 프리셋 하나를 실제로 불러 지연·토큰·형식을 본다(유료면 하루 상한에 잡힘). F-35
 async fn llm_test(State(app): State<AppRef>, headers: HeaderMap, Json(b): Json<LlmTestReq>) -> R {
     authed(&app, &headers)?;
-    if !app.cfg().llm.presets.contains_key(&b.preset) {
-        return Err(err(StatusCode::BAD_REQUEST, "없는 프리셋"));
+    match app.cfg().llm.presets.get(&b.preset) {
+        None => return Err(err(StatusCode::BAD_REQUEST, "없는 프리셋")),
+        Some(p) if p.is_decision() => return Err(err(StatusCode::BAD_REQUEST, "판단 전용 모델은 판단 모델 카드에서 시험해요")),
+        _ => {}
     }
     let q = b.question.map(|q| q.trim().to_string()).filter(|q| !q.is_empty()).unwrap_or_else(|| "오늘 저녁 메뉴 하나만 추천해 줘.".into());
     if q.chars().count() > 300 {

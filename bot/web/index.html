@@ -153,14 +153,17 @@
       <div class="card"><h2>키 등록 여부</h2><div id="keys"></div><p class="dim">키 값은 화면에 나오지 않아요. 바꾸려면 보조 PC의 <span class="mono">.env</span>를 고친 뒤 재시작.</p></div>
     </div>
     <div class="row" style="margin-bottom:14px"><button class="b" onclick="saveChains()">체인 저장</button><button class="g" onclick="resetChains()">config.toml 기본값으로</button><span></span></div>
-    <div class="card"><h2>판단 모델 <span class="dim" style="font-size:12px">(이름이 애매하게 들렸을 때 "정말 부른 말인가"를 무료 모델에 물어봄)</span></h2>
+    <div class="card"><h2>판단 모델 <span class="dim" style="font-size:12px">(이름이 애매하게 들렸을 때 "정말 부른 말인가"를 작은 모델에 물어봄)</span></h2>
       <div class="row"><div><label>켜기</label><select id="jdOn"><option value="true">켬</option><option value="false">끔</option></select></div>
-        <div><label>모델 (무료 프리셋만)</label><select id="jdPreset"></select></div>
+        <div><label>모델</label><select id="jdPreset" onchange="judgeInfo()"></select></div>
+        <div><label>부름 기준 확률</label><input id="jdThr" type="number" min="0.05" max="0.99" step="0.01" placeholder="추천값"></div>
         <div><label>범위</label><select id="jdScope"><option value="애매할 때">애매할 때 — 비슷한 말·위험 별칭만</option><option value="이름도">이름도 — 헤이 없이 이름만 부른 것까지</option></select></div>
         <div><label>기다릴 시간(ms)</label><input id="jdTimeout" type="number" min="300" max="10000" step="100"></div></div>
-      <div class="dim" style="font-size:12px">헤이를 붙인 호출·이어서 말하기·이모지 호출은 묻지 않아요. 모델이 늦거나 실패하면 원래 규칙대로 대답해요. 판단 결과는 대화 탭 받아쓰기 상황·호출별 지연에 보여요.</div>
+      <div id="jdInfo" style="font-size:13px;margin:4px 0"></div>
+      <table id="jdTbl" style="margin:6px 0"></table>
+      <div class="dim" style="font-size:12px">판단 전용 모델은 "부름" 확률(0~1)을 내고, 기준 확률 이상이면 부른 것으로 봐요. 기준을 올리면 덜 부르고(잘못 부름↓), 내리면 더 잘 불러요(놓침↓). 비워 두면 모델별 추천값. 유료 판단 모델 비용은 하루 사용액에 더해지고, 상한에 닿으면 판단 없이 원래 규칙대로예요.<br>헤이를 붙인 호출·이어서 말하기·이모지 호출은 묻지 않아요. 모델이 늦거나 실패하면 원래 규칙대로 대답해요. 판단 결과는 대화 탭 받아쓰기 상황·호출별 지연에 보여요.</div>
       <div class="row" style="margin-top:8px"><button class="b" onclick="saveJudge()">저장</button><button class="g" onclick="resetJudge()">config.toml 기본값으로</button><span></span></div>
-      <label style="margin-top:12px">시험 — 이 말이 캐릭터를 부른 것인지 물어보기(무료)</label>
+      <label style="margin-top:12px">시험 — 이 말이 캐릭터를 부른 것인지 물어보기(위에서 고른 모델·기준으로, 저장 안 함)</label>
       <div class="row"><select id="jdChar" style="flex:0 0 120px"></select><input id="jdText" placeholder="예: 실장 회의 들어가셨대" maxlength="300"><button class="g" onclick="testJudge()">물어보기</button></div>
       <textarea id="jdCtx" style="min-height:50px;margin-top:6px" placeholder="앞 대화(선택) — 줄마다 '이름: 말'"></textarea>
       <div id="jdOut"></div></div>
@@ -315,7 +318,7 @@ async function selectGuild() {
 }
 
 function presetOpts(cur, withNone) {
-  return (withNone ? `<option value="">없음</option>` : '') + Object.entries(GD.presets).map(([k, p]) =>
+  return (withNone ? `<option value="">없음</option>` : '') + Object.entries(GD.presets).filter(([, p]) => !p.decision).map(([k, p]) =>
     `<option value="${esc(k)}" ${k === cur ? 'selected' : ''}>${esc(k)} — ${esc(p.model)} (${p.free ? '무료' : '유료'}${p.owner_only ? '·주인' : ''}${p.has_key ? '' : '·키 없음'}${p.trains_on_input ? '·⚠️학습' : ''})</option>`).join('');
 }
 function renderChars() {
@@ -483,30 +486,45 @@ async function loadProv() {
   $('keys').innerHTML = Object.entries(PROV.keys).map(([k, v]) => `<div><span class="mono">${k}</span> ${v ? '<span class="ok">등록됨</span>' : '<span class="dim">없음</span>'}</div>`).join('');
   $('presetTbl').innerHTML = '<tr><th>프리셋</th><th>공급자 · 모델</th><th>구분</th><th>키</th><th>켜기</th><th>시험</th></tr>' + Object.entries(PROV.presets).map(([k, p]) =>
     `<tr><td class="mono">${esc(k)}</td><td>${esc(p.provider)} · <span class="mono">${esc(p.model)}</span>${p.effort ? ` <span class="dim">effort ${esc(p.effort)}</span>` : ''}</td>
-     <td>${p.free ? '무료' : `유료 $${(+p.price_in).toFixed(2)}/$${(+p.price_out).toFixed(2)}`}${p.owner_only ? ' · 주인 전용' : ''}${p.trains_on_input ? ' · <span class="bad">⚠️입력 학습</span>' : ''}</td>
+     <td>${p.decision ? '<b>판단 전용</b> · ' : ''}${p.free ? '무료' : `유료 $${(+p.price_in).toFixed(3)}/$${(+p.price_out).toFixed(2)}`}${p.owner_only ? ' · 주인 전용' : ''}${p.trains_on_input ? ' · <span class="bad">⚠️입력 학습</span>' : ''}</td>
      <td>${p.has_key ? '<span class="ok">있음</span>' : `<span class="dim">없음 (${esc(p.key_env)})</span>`}</td>
      <td><input type="checkbox" style="width:auto" ${p.disabled ? '' : 'checked'} onchange="togglePreset(${jsq(k)}, !this.checked)"></td>
-     <td><button class="g" ${p.has_key ? '' : 'disabled'} onclick="llmTest(${jsq(k)}, ${p.free ? 'true' : 'false'})">시험</button></td></tr>`).join('');
+     <td><button class="g" ${p.has_key && !p.decision ? '' : 'disabled'} title="${p.decision ? '판단 모델 카드에서 시험' : ''}" onclick="llmTest(${jsq(k)}, ${p.free ? 'true' : 'false'})">시험</button></td></tr>`).join('');
   $('freeChain').textContent = '무료 대체 체인(두뇌·대체 두뇌가 다 실패하면): ' + (PROV.free_chain.length ? PROV.free_chain.join(' → ') : '없음');
   loadJudge();
 }
+let JD = { presets: [] };
+const jdKind = p => p.decision ? (p.free ? '판단 전용 · 무료' : `판단 전용 · $${p.price_in}/1M`) : '무료 · YES/NO';
 async function loadJudge() {
-  const r = await api('/api/judge'); const j = r.judge;
+  const r = await api('/api/judge'); const j = r.judge; JD = r;
   $('jdOn').value = String(j.on); $('jdScope').value = j.scope; $('jdTimeout').value = j.timeout_ms;
+  $('jdThr').value = j.threshold ?? '';
   $('jdPreset').innerHTML = r.presets.map(p => `<option value="${esc(p.name)}" ${p.name === j.preset ? 'selected' : ''}>${esc(p.name)} — ${esc(p.model)}${p.has_key ? '' : ' (키 없음)'}</option>`).join('');
+  $('jdTbl').innerHTML = '<tr><th>모델</th><th>구분</th><th>추천 기준</th><th>실측 (2026-10-16)</th><th></th></tr>' + r.presets.map(p =>
+    `<tr><td class="mono">${esc(p.name)}<br><span class="dim">${esc(p.model)}</span></td><td>${esc(jdKind(p))}${p.has_key ? '' : ' · <span class="bad">키 없음</span>'}</td>
+     <td>${p.decision ? esc(p.threshold ?? 0.5) : '-'}</td><td style="font-size:12px">${esc(p.note || '')}</td>
+     <td><button class="g" onclick="$('jdPreset').value=${jsq(p.name)};$('jdThr').value='';judgeInfo()">고르기</button></td></tr>`).join('');
   $('jdChar').innerHTML = Object.keys(GD?.characters || {}).map(k => `<option>${esc(k)}</option>`).join('');
+  judgeInfo();
 }
+function judgeInfo() {
+  const p = JD.presets.find(x => x.name === val('jdPreset'));
+  $('jdThr').disabled = !p?.decision;
+  $('jdThr').placeholder = p?.decision ? `추천 ${p.threshold ?? 0.5}` : '확률 없음(YES/NO)';
+  $('jdInfo').innerHTML = p ? `<b class="mono">${esc(p.name)}</b> · ${esc(jdKind(p))}${p.note ? ' · ' + esc(p.note) : ''}` : '';
+}
+function judgeThr() { const t = val('jdThr'); return (t === '' || $('jdThr').disabled) ? null : +t; }
 async function saveJudge() {
-  await post('/api/judge', { judge: { on: val('jdOn') === 'true', preset: val('jdPreset'), scope: val('jdScope'), timeout_ms: Math.round(+val('jdTimeout') || 2500) } });
+  await post('/api/judge', { judge: { on: val('jdOn') === 'true', preset: val('jdPreset'), scope: val('jdScope'), timeout_ms: Math.round(+val('jdTimeout') || 2500), threshold: judgeThr() } });
   toast('판단 모델 저장'); loadJudge();
 }
 async function resetJudge() { await post('/api/judge', { reset: true }); toast('기본값으로'); loadJudge(); }
 async function testJudge() {
   $('jdOut').innerHTML = '<p class="dim">물어보는 중…</p>';
   try {
-    const r = await post('/api/judge-test', { character: val('jdChar'), text: val('jdText'), context: val('jdCtx') });
+    const r = await post('/api/judge-test', { character: val('jdChar'), text: val('jdText'), context: val('jdCtx'), preset: val('jdPreset'), threshold: judgeThr() });
     const rule = r.rule ? `규칙 판정: ${esc(r.rule.character)}(${esc(r.rule.via)}, "${esc(r.rule.word)}")` : '규칙 판정: 호출 아님';
-    $('jdOut').innerHTML = `<p>${r.call ? '<span class="ok">📣 부른 것</span>' : '<span class="warn">🙅 부른 게 아님</span>'} · ${esc(r.ms)}ms · <span class="mono">${esc(r.preset)}</span> · 답 "${esc(r.raw)}"<br><span class="dim">${rule}</span></p>`;
+    $('jdOut').innerHTML = `<p>${r.call ? '<span class="ok">📣 부른 것</span>' : '<span class="warn">🙅 부른 게 아님</span>'} · ${r.p != null ? `부름 확률 <b>${esc((r.p * 100).toFixed(1))}%</b> (기준 ${esc(Math.round(r.threshold * 100))}%) · ` : `답 "${esc(r.raw)}" · `}${esc(r.ms)}ms · <span class="mono">${esc(r.preset)}</span><br><span class="dim">${rule}</span></p>`;
   } catch (e) { $('jdOut').innerHTML = `<p class="bad">${esc(String(e.message || e))}</p>`; }
 }
 function renderChains() {

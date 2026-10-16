@@ -251,6 +251,9 @@ fn check_preset(app: &AppRef, cmd: &CommandInteraction, name: &str, allow_none: 
     let Some(p) = cfg.llm.presets.get(name) else {
         return Err(format!("'{name}' 프리셋이 없어요. 목록에서 골라 주세요."));
     };
+    if p.is_decision() {
+        return Err(format!("'{name}'은(는) 판단 전용 모델이라 대답 두뇌로 못 써요."));
+    }
     if p.owner_only && !is_owner(app, cmd) {
         return Err(format!("'{name}'은(는) 비싸서 주인만 고를 수 있어요."));
     }
@@ -898,6 +901,9 @@ pub fn provider_embed(app: &AppRef) -> CreateEmbed {
     for (name, p) in &cfg.llm.presets {
         let mut flags = vec![];
         flags.push(if p.free { "무료" } else { "유료" });
+        if p.is_decision() {
+            flags.push("판단 전용");
+        }
         if !p.has_key() {
             flags.push("키 없음");
         }
@@ -1036,7 +1042,7 @@ pub async fn autocomplete(app: &AppRef, ctx: &Context, ac: &CommandInteraction) 
             // 쓸 수 있는 것 먼저, 못 쓰는 것(키 없음·꺼짐)은 뒤로 — 고르면 이유를 알려 준다
             let mut rows: Vec<(bool, AutocompleteChoice)> = vec![];
             for (name, p) in &cfg.llm.presets {
-                if !typed.is_empty() && !name.to_lowercase().contains(&typed) && !p.model.to_lowercase().contains(&typed) {
+                if p.is_decision() || (!typed.is_empty() && !name.to_lowercase().contains(&typed) && !p.model.to_lowercase().contains(&typed)) {
                     continue;
                 }
                 // 주인만 고를 수 있는 것은 주인에게만 보여 준다

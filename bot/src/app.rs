@@ -160,12 +160,12 @@ impl App {
         let st = self.store.lock().unwrap();
         if let Some(o) = st.state.guilds.get(&guild).and_then(|g| g.characters.get(key)) {
             if let Some(b) = &o.brain {
-                if cfg.llm.presets.contains_key(b) {
+                if cfg.llm.presets.get(b).is_some_and(|p| !p.is_decision()) {
                     c.brain = b.clone();
                 }
             }
             if let Some(f) = &o.fallback {
-                c.fallback = Some(f.clone()).filter(|f| !f.is_empty() && cfg.llm.presets.contains_key(f));
+                c.fallback = Some(f.clone()).filter(|f| !f.is_empty() && cfg.llm.presets.get(f).is_some_and(|p| !p.is_decision()));
             }
             if let Some(p) = &o.persona {
                 c.persona = p.clone();

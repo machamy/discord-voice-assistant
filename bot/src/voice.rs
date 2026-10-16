@@ -928,10 +928,12 @@ async fn judge_then_call(app: AppRef, sess: Arc<Session>, req: JudgeReq, event: 
         tail[tail.len().saturating_sub(6)..].to_vec()
     };
     let variants = name_variants(&app, &h.character);
-    let (system, user) = llm::judge_prompt(&names, &ch_name, &variants, &h.word, &recent, &job.caller, &text);
+    let jp = llm::judge_prompt(&names, &ch_name, &variants, &h.word, &recent, &job.caller, &text);
     let t = Instant::now();
-    let r = llm::judge(&app, &jd.preset, &system, &user, Duration::from_millis(jd.timeout_ms)).await;
+    let r = llm::judge(&app, &jd, &jd.preset, &jp, Duration::from_millis(jd.timeout_ms)).await;
     let ms = t.elapsed().as_millis() as u64;
+    // 판단 전용 모델이면 확률도 기록에 — "판단: 부름 93%"
+    let pct = r.as_ref().ok().and_then(|v| v.p).map(|p| format!(" {:.0}%", p * 100.0)).unwrap_or_default();
     let verdict = match &r {
         Ok(v) => Some(v.call),
         Err(e) => {
@@ -972,11 +974,11 @@ async fn judge_then_call(app: AppRef, sess: Arc<Session>, req: JudgeReq, event: 
     let (note, call, uncertain) = match verdict {
         Some(true) => {
             sess.stats.lock().unwrap().judge_yes += 1;
-            (format!("{ch}({}·판단: 부름)", h.via), true, false)
+            (format!("{ch}({}·판단: 부름{pct})", h.via), true, false)
         }
         Some(false) => {
             sess.stats.lock().unwrap().judge_no += 1;
-            (format!("{ch}({}·판단: 아님)", h.via), false, false)
+            (format!("{ch}({}·판단: 아님{pct})", h.via), false, false)
         }
         None => {
             sess.stats.lock().unwrap().judge_fail += 1;
