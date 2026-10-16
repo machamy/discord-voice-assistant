@@ -270,7 +270,13 @@ const PARTICLES: [&str; 30] = [
 ];
 
 /// 문장 속 이름이 "부른 것"인가 — 맨 앞(부르는 말만 앞에 있음), '아/야' 부르는 꼴, 문장 끝 부름만 인정
+/// 호출어로 시작하지만 다른 뜻으로 굳은 낱말 — 여기서 시작하면 부름이 아니다(요즘 말 "테토남·테토녀", 2026-10-16)
+const NOT_CALL_WORDS: [&str; 6] = ["테토남", "테토녀", "테토력", "테토스테론", "테토 남", "테토 녀"];
+
 fn is_called(text: &str, start: usize, end: usize) -> bool {
+    if NOT_CALL_WORDS.iter().any(|w| text[start..].starts_with(w)) {
+        return false;
+    }
     let after = &text[end..];
     for voc in ["아", "야"] {
         if let Some(r) = after.strip_prefix(voc) {
@@ -328,7 +334,10 @@ impl Wake {
     /// 두 모드 모두 헤이(없으면 이름) 앞은 글자의 시작이어야 한다 — "플랜에이클짱"은 안 걸린다
     fn build(words: &[String], hey: bool) -> Result<Regex, regex::Error> {
         // 띄어쓰기가 있는 호출어("오케이 클짱")는 받아쓰기 띄어쓰기와 상관없이 — 공백 자리를 \s*로
-        let alt = words.iter().map(|w| regex::escape(w).replace(' ', r"\s*")).collect::<Vec<_>>().join("|");
+        // 긴 호출어부터 — 정규식 대안은 왼쪽부터 맞추므로 "테토"가 "테토짱"보다 먼저 걸려 질문이 "짱 …"이 되지 않게
+        let mut ws: Vec<&String> = words.iter().collect();
+        ws.sort_by_key(|w| std::cmp::Reverse(w.chars().filter(|c| !c.is_whitespace()).count()));
+        let alt = ws.iter().map(|w| regex::escape(w).replace(' ', r"\s*")).collect::<Vec<_>>().join("|");
         let opt = if hey { "" } else { "?" };
         // 1번 묶음 = 헤이, 2번 묶음 = 이름
         let pat = format!(r"(?:^|[^\p{{L}}\p{{N}}])(?:({HEY})[^\p{{L}}\p{{N}}]*){opt}({alt})");
@@ -465,6 +474,40 @@ mod tests {
             ("클짱".into(), vec!["클짱".into(), "클장".into(), "크짱".into(), "크장".into()]),
             ("아짱".into(), vec!["아짱".into(), "아장".into(), "아쨩".into()]),
         ])
+    }
+
+    #[test]
+    fn long_names_from_config() {
+        // config.example.toml의 실제 호출어 — 클로드짱·아스트라짱·코덱스짱·지피티짱(2026-10-16)
+        let c: crate::config::Config = toml::from_str(include_str!("../config.example.toml")).expect("형식");
+        let w = Wake::new(&c.characters.iter().map(|(k, ch)| (k.clone(), ch.wake.clone())).collect::<Vec<_>>());
+        for (t, who) in [
+            ("클로드짱 오늘 뭐 먹지?", "클짱"),
+            ("클로드 짱 이거 봐 줘", "클짱"),
+            ("아스트라짱 코드 리뷰 해 줘", "아짱"),
+            ("코덱스짱, 이거 왜 안 돼?", "아짱"),
+            ("지피티짱 날씨 어때", "아짱"),
+            ("GPT짱 노래 추천", "아짱"),
+            ("헤이 코덱스짱 안녕", "아짱"),
+        ] {
+            let h = w.find(t, false).unwrap_or_else(|| panic!("{t} 못 잡음"));
+            assert_eq!(h.character, who, "{t}");
+            assert_eq!(h.via == "이름" || h.via == "헤이", true, "{t}: {}", h.via);
+        }
+        let h = w.find("클로드짱 오늘 뭐 먹지?", false).unwrap();
+        assert_eq!(h.rest, "오늘 뭐 먹지?");
+        // 짧은 호출어가 긴 것의 앞부분이어도 긴 것으로 — 질문이 "짱 …"이 되지 않게
+        let h = w.find("테토짱 노래 추천해 줘", false).unwrap();
+        assert_eq!((h.character.as_str(), h.rest.as_str()), ("테토", "노래 추천해 줘"));
+        // 언급은 호출 아님
+        assert!(w.find("코덱스짱이 그러는데 내일 비 온대", false).is_none());
+        // 테토(2026-10-16) — 부름은 잡고, 요즘 말 "테토남·테토녀"는 부름이 아니다
+        for t in ["테토 오늘 뭐 먹지?", "테토야 노래 추천해 줘", "헤이 테토 안녕"] {
+            assert_eq!(w.find(t, false).map(|h| h.character), Some("테토".to_string()), "{t}");
+        }
+        for t in ["걔 완전 테토남이야", "테토녀 스타일 좋더라", "테토남 테스트 해 봤어?", "요즘 테토 에겐 그런 거 유행이잖아"] {
+            assert!(w.find(t, false).is_none_or(|h| h.character != "테토"), "{t}: {:?}", w.find(t, false).map(|h| h.via));
+        }
     }
 
     #[test]

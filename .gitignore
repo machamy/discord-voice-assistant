@@ -100,3 +100,10 @@ data/
 *.log
 bot/config.toml
 .claude/
+
+# RVC 목소리 모델·인덱스 — 배포 금지 라이선스(테토 등), 보조 PC에만 둔다
+models/
+*.pth
+*.index
+rvc-venv/
+rvc/applio/

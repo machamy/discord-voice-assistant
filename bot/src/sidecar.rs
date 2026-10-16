@@ -60,8 +60,8 @@ pub async fn stt(app: &AppRef, pcm: &[i16]) -> Result<SttResult> {
 /// 캐릭터 목소리로 TTS 체인을 만든다 — 전역 체인 순서 + 캐릭터의 공급자별 목소리
 pub fn voice_chain(app: &AppRef, voices: &std::collections::BTreeMap<String, Voice>) -> Vec<TtsVoice> {
     let mut order = app.tts_chain();
-    // 캐릭터에 따로 고른 캐릭터 목소리(Typecast·ElevenLabs 음성 ID)는 전역 체인에 없어도 맨 앞에 — 실패하면 체인대로
-    for p in ["elevenlabs", "typecast"] {
+    // 캐릭터에 따로 고른 캐릭터 목소리(Typecast·ElevenLabs 음성 ID, RVC 모델)는 전역 체인에 없어도 맨 앞에 — 실패하면 체인대로
+    for p in ["elevenlabs", "typecast", "rvc"] {
         if voices.get(p).is_some_and(|v| !v.voice.is_empty()) {
             // 체인 뒤쪽에 있어도 맨 앞으로
             order.retain(|x| x != p);
@@ -140,7 +140,7 @@ async fn kill_tree(child: &mut Child) {
     sweep_orphans().await;
 }
 
-/// 이 설치 폴더의 사이드카·Melo 작업 python 중 남은 것을 끈다(명령줄에 절대 경로가 들어 있다)
+/// 이 설치 폴더의 사이드카·Melo·RVC 작업 python 중 남은 것을 끈다(명령줄에 절대 경로가 들어 있다)
 async fn sweep_orphans() {
     #[cfg(windows)]
     {
@@ -150,7 +150,7 @@ async fn sweep_orphans() {
         let script = format!(
             "$d='{d}'; Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object {{ $_.CommandLine -and \
              $_.CommandLine.IndexOf($d,[StringComparison]::OrdinalIgnoreCase) -ge 0 -and \
-             ($_.CommandLine -like '*sidecar?app.py*' -or $_.CommandLine -like '*sidecar?melo_worker.py*') }} | \
+             ($_.CommandLine -like '*sidecar?app.py*' -or $_.CommandLine -like '*sidecar?melo_worker.py*' -or $_.CommandLine -like '*sidecar?rvc_worker.py*') }} | \
              ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
         );
         let mut cmd = Command::new("powershell");

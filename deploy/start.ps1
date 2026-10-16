@@ -13,10 +13,10 @@ Get-Process voicebot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq 
     Stop-Process -Force -ErrorAction SilentlyContinue
 
 # 2) 이 폴더의 사이드카도 새 코드로 — 남아 있으면 새 봇이 옛 사이드카를 물려받는다.
-#    대상: 이 폴더 venv(sidecar\.venv, melo-venv)의 python. venv python은 진짜 python을 자식으로
+#    대상: 이 폴더 venv(sidecar\.venv, melo-venv, rvc-venv)의 python. venv python은 진짜 python을 자식으로
 #    띄우므로 트리째(/T) 끈다. 부모가 먼저 죽어 고아가 된 자식은 "부모 없음 + app.py/melo_worker.py"로 찾는다
 # 끝에 \ 를 붙여 경로 경계까지 비교(.venv-old, melo-venv-backup 같은 다른 폴더 제외)
-$venvs = @(((Join-Path $Dir 'sidecar\.venv') + '\'), ((Join-Path $Dir 'melo-venv') + '\'))
+$venvs = @(((Join-Path $Dir 'sidecar\.venv') + '\'), ((Join-Path $Dir 'melo-venv') + '\'), ((Join-Path $Dir 'rvc-venv') + '\'))
 $procs = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'")
 $alive = @{}; Get-Process | ForEach-Object { $alive[[int]$_.Id] = $true }
 $procs | Where-Object {
@@ -24,7 +24,7 @@ $procs | Where-Object {
     ($p -and ($venvs | Where-Object { $p.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) })) -or
     ((-not $alive[[int]$_.ParentProcessId]) -and $_.CommandLine -and
         $_.CommandLine.IndexOf($Dir, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
-        ($_.CommandLine -like "*sidecar?app.py*" -or $_.CommandLine -like "*sidecar?melo_worker.py*"))
+        ($_.CommandLine -like "*sidecar?app.py*" -or $_.CommandLine -like "*sidecar?melo_worker.py*" -or $_.CommandLine -like "*sidecar?rvc_worker.py*"))
 } | ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>&1 | Out-Null }
 
 New-Item -ItemType Directory -Force data | Out-Null

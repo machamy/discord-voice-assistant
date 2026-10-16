@@ -207,7 +207,7 @@
 <div id="toast"></div>
 
 <script>
-let S = null, G = null, GD = null, PROV = null, VOICES = [], TC_VOICES = null, AZ_VOICES = [];
+let S = null, G = null, GD = null, PROV = null, VOICES = [], TC_VOICES = null, AZ_VOICES = [], RVC_MODELS = null;
 // 귀여운·듣기 좋은 목소리 빠른 설정(edge-tts, 무료) — 다국어 음성은 한국어를 읽지만 억양이 살짝 섞인다
 const VOICE_PRESETS = [
   ['선희 기본', 'ko-KR-SunHiNeural', '+0%', '+0Hz'],
@@ -314,6 +314,7 @@ async function selectGuild() {
   if (!VOICES.length) { try { VOICES = (await api('/api/voices')).voices; } catch {} }
   if (!TC_VOICES) { try { TC_VOICES = (await api('/api/voices?provider=typecast')).voices || []; } catch { TC_VOICES = []; } }
   if (!AZ_VOICES.length) { try { AZ_VOICES = (await api('/api/voices?provider=azure-tts')).voices || []; } catch {} }
+  if (!RVC_MODELS) { try { RVC_MODELS = (await api('/api/voices?provider=rvc')).voices || []; } catch { RVC_MODELS = []; } }
   renderChars(); renderServer(); renderOps();
 }
 
@@ -328,6 +329,7 @@ function renderChars() {
     const v = c.voice['edge-tts'] || { voice: '', rate: '+0%', pitch: '+0Hz' };
     const tc = c.voice['typecast'] || { voice: '', rate: '+0%', pitch: '+0Hz' };
     const az = c.voice['azure-tts'] || { voice: '', rate: '+0%', pitch: '+0Hz' };
+    const rv = c.voice['rvc'] || { voice: '', rate: '+5%', pitch: '+0Hz' };
     const custom = !!GD.custom_characters?.[k];
     const list = VOICES.length ? VOICES : [v.voice];
     const known = list.some(x => voiceName(x) === v.voice);
@@ -347,6 +349,9 @@ function renderChars() {
       ${TC_VOICES && TC_VOICES.length
         ? `<select id="tc-${i}"><option value="">안 씀</option>${tc.voice && !TC_VOICES.some(x => x.name === tc.voice) ? `<option value="${esc(tc.voice)}" selected>${esc(tc.voice)} (목록에 없음)</option>` : ''}${TC_VOICES.map(x => `<option value="${esc(x.name)}" ${x.name === tc.voice ? 'selected' : ''}>${esc(x.label || x.name)}</option>`).join('')}</select>`
         : `<input id="tc-${i}" value="${esc(tc.voice)}" placeholder="음성 ID (tc_…) — TYPECAST_API_KEY를 넣으면 목록이 떠요">`}
+      <label>RVC 목소리 (보조 PC에서 학습 모델로 변환 · 무료 · 고르면 이 목소리를 먼저 씀, 문장당 약 2초 더 걸림)</label>
+      <div class="row"><select id="rv-${i}"><option value="">안 씀</option>${rv.voice && !(RVC_MODELS || []).some(x => x.name === rv.voice) ? `<option value="${esc(rv.voice)}" selected>${esc(rv.voice)} (모델 없음)</option>` : ''}${(RVC_MODELS || []).map(x => `<option value="${esc(x.name)}" ${x.name === rv.voice ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+        <div style="flex:0 0 130px"><input id="rvp-${i}" value="${esc(rv.pitch)}" title="높낮이 — 반음(+3Hz = +3반음, -12~+12)"></div></div>
       <details><summary class="dim" style="cursor:pointer;margin-top:8px">말투 글 고치기 (성격 · 존댓말)</summary>
       <label>성격 말투 (시스템 프롬프트)</label><textarea id="pe-${i}">${esc(c.persona)}</textarea>
       <label>존댓말 말투 (비우면 성격 말투 + "존댓말로" 지시)</label><textarea id="pp-${i}">${esc(c.persona_polite || '')}</textarea></details>
@@ -403,6 +408,8 @@ function voicePatch(i) {
   voice['azure-tts'] = azv ? { voice: azv, rate: nv.rate, pitch: nv.pitch } : nv;
   const tc = val('tc-' + i).trim();
   if (tc) voice['typecast'] = { voice: tc, rate: '+0%', pitch: '+0Hz' }; else delete voice['typecast'];
+  const rv = val('rv-' + i);
+  if (rv) voice['rvc'] = { voice: rv, rate: (c.voice['rvc'] || {}).rate || '+5%', pitch: val('rvp-' + i) || '+0Hz' }; else delete voice['rvc'];
   return voice;
 }
 async function saveChar(i) {

@@ -459,7 +459,7 @@ pub fn stt_provider_ok(x: &str) -> bool {
             && m.split('/').all(|seg| seg.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())))
 }
 
-pub const TTS_PROVIDERS: [&str; 6] = ["edge-tts", "azure-tts", "melotts", "elevenlabs", "openai-tts", "typecast"];
+pub const TTS_PROVIDERS: [&str; 7] = ["edge-tts", "azure-tts", "melotts", "elevenlabs", "openai-tts", "typecast", "rvc"];
 
 /// 목소리 설정 검증 — 웹·명령·설정 파일 공통(SSML·요청에 들어가는 값이라 형식을 좁힌다)
 pub fn validate_voice(provider: &str, v: &Voice) -> std::result::Result<(), String> {
@@ -480,6 +480,15 @@ pub fn validate_voice(provider: &str, v: &Voice) -> std::result::Result<(), Stri
     }
     if !num(&v.pitch, "Hz", -50, 50) {
         return Err(format!("높낮이 형식 오류: '{}' (예: -5Hz)", v.pitch));
+    }
+    // RVC: 목소리 = 모델 폴더 이름(소문자·숫자·-·_), 높낮이 = 반음(-12~12) — SPEC F-60
+    if provider == "rvc" {
+        if !v.voice.is_empty() && !(v.voice.len() <= 40 && v.voice.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))) {
+            return Err(format!("RVC 모델 이름 형식 오류: '{}' (소문자·숫자·-·_)", v.voice));
+        }
+        if !num(&v.pitch, "Hz", -12, 12) {
+            return Err(format!("RVC 높낮이는 반음 -12~+12: '{}' (예: +3Hz = +3반음)", v.pitch));
+        }
     }
     Ok(())
 }

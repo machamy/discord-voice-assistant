@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import logging
 import os
@@ -359,15 +360,20 @@ async def tts_azure(v: TtsVoice, text: str) -> np.ndarray:
 
 
 class MeloWorker:
-    """별도 venv(melo-venv, Python 3.11)의 melo_worker.py를 띄워 쓴다. 없으면 '미설치'로 다음 공급자에 넘긴다."""
+    """별도 venv의 작업 프로세스(표준입출력 JSON 한 줄씩)를 띄워 쓴다 — 기본은 melo-venv(Python 3.11)의 melo_worker.py.
+    RVC 변환(rvc-venv의 rvc_worker.py)도 같은 틀을 쓴다. venv가 없으면 '미설치'로 다음 공급자에 넘긴다."""
 
-    def __init__(self) -> None:
+    def __init__(self, label: str = "melotts", env_var: str = "MELO_PYTHON", venv: str = "melo-venv",
+                 script: str = "melo_worker.py", extra_env: dict | None = None, read_timeout: float = 90) -> None:
         self.proc: asyncio.subprocess.Process | None = None
         self.lock = asyncio.Lock()
+        self.label, self.env_var, self.venv, self.script = label, env_var, venv, script
+        self.extra_env = extra_env or {}
+        self.read_timeout = read_timeout
 
     def python(self) -> str:
         # 절대 경로 — 명령줄에 설치 폴더가 드러나야 start.ps1이 이 설치본만 골라 끈다
-        return os.path.abspath(os.environ.get("MELO_PYTHON", str(Path("melo-venv") / "Scripts" / "python.exe")))
+        return os.path.abspath(os.environ.get(self.env_var, str(Path(self.venv) / "Scripts" / "python.exe")))
 
     def available(self) -> bool:
         return Path(self.python()).exists()
@@ -382,22 +388,28 @@ class MeloWorker:
 
     async def _start(self) -> None:
         if not self.available():
-            raise ProviderError("melotts 미설치(melo-venv 없음)")
-        script = str(Path(__file__).with_name("melo_worker.py"))
+            raise ProviderError(f"{self.label} 미설치({self.venv} 없음)")
+        script = str(Path(__file__).with_name(self.script))
         self.proc = await asyncio.create_subprocess_exec(
             self.python(), script, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, limit=64 * 1024 * 1024,
+            stderr=asyncio.subprocess.DEVNULL, limit=64 * 1024 * 1024, env={**os.environ, **self.extra_env},
         )
-        # 모델 로드(첫 실행은 다운로드)까지 기다린다
-        line = b""
-        for _ in range(50):
-            line = await asyncio.wait_for(self.proc.stdout.readline(), timeout=300)
-            if not line or b"ready" in line:
-                break
-        if b"ready" not in line:
-            raise ProviderError("melotts 작업 프로세스 시작 실패")
+        # 모델 로드(첫 실행은 다운로드)까지 기다린다. 기다리다 끊기면(시간 초과·취소·실패) 반쯤 뜬 프로세스를 버린다 —
+        # 남겨 두면 나중에 오는 준비 신호를 다음 요청이 응답으로 잘못 읽는다
+        try:
+            line = b""
+            for _ in range(50):
+                line = await asyncio.wait_for(self.proc.stdout.readline(), timeout=300)
+                if not line or b"ready" in line:
+                    break
+            if b"ready" not in line:
+                raise ProviderError(f"{self.label} 작업 프로세스 시작 실패")
+        except BaseException:
+            self._kill()
+            raise
 
-    async def synth(self, text: str, speed: float) -> bytes:
+    async def ask(self, req: dict) -> bytes:
+        """요청 한 줄을 보내고 WAV 바이트를 받는다"""
         import base64
         import json as _json
 
@@ -406,12 +418,12 @@ class MeloWorker:
                 if self.proc is None or self.proc.returncode is not None:
                     await self._start()
                 assert self.proc and self.proc.stdin and self.proc.stdout
-                self.proc.stdin.write((_json.dumps({"text": text, "speed": speed}) + "\n").encode())
+                self.proc.stdin.write((_json.dumps(req) + "\n").encode())
                 await self.proc.stdin.drain()
                 line = b""
                 # 혹시 섞여 든 JSON 아닌 줄은 건너뛴다
                 for _ in range(50):
-                    line = await asyncio.wait_for(self.proc.stdout.readline(), timeout=90)
+                    line = await asyncio.wait_for(self.proc.stdout.readline(), timeout=self.read_timeout)
                     if not line or line.lstrip().startswith(b"{"):
                         break
             except BaseException:
@@ -420,15 +432,47 @@ class MeloWorker:
                 raise
         if not line:
             self.proc = None
-            raise ProviderError("melotts 작업 프로세스 종료")
+            raise ProviderError(f"{self.label} 작업 프로세스 종료")
         r = _json.loads(line)
         if "error" in r:
             # 작업 프로세스가 보낸 원문(라이브러리 예외)은 넘기지 않는다 — 종류만
-            raise ProviderError("melotts 합성 오류")
+            log.warning("%s 작업 오류 %s", self.label, str(r["error"]).split(":")[0][:60])
+            raise ProviderError(f"{self.label} 합성 오류")
         return base64.b64decode(r["wav"])
+
+    async def synth(self, text: str, speed: float) -> bytes:
+        return await self.ask({"text": text, "speed": speed})
 
 
 MELO = MeloWorker()
+
+# RVC 목소리 변환(SPEC F-60) — models/rvc/<이름>/*.pth(+*.index). 모델 파일은 저장소에 넣지 않는다(배포 금지 라이선스)
+RVC_MODELS = Path(os.environ.get("RVC_MODELS", str(Path("models") / "rvc")))
+
+
+def rvc_models() -> list[str]:
+    try:
+        return sorted(d.name for d in RVC_MODELS.iterdir()
+                      if d.is_dir() and re.fullmatch(r"[a-z0-9_-]{1,40}", d.name) and any(p.is_file() for p in d.glob("*.pth")))
+    except OSError:
+        return []
+
+
+RVC = MeloWorker("rvc", "RVC_PYTHON", "rvc-venv", "rvc_worker.py", read_timeout=60,
+                 extra_env={"RVC_PRELOAD": os.environ.get("RVC_PRELOAD", "teto"), "RVC_MODELS": os.path.abspath(str(RVC_MODELS))})
+
+
+async def tts_rvc(v: TtsVoice, text: str) -> np.ndarray:
+    """edge-tts(기본 선희)로 읽고 RVC 모델 목소리로 바꾼다. voice = 모델 이름, rate = 원본 속도, pitch "+3Hz" = +3반음(-12~12)"""
+    name = v.voice or "teto"
+    if not RVC.available() or name not in rvc_models():
+        raise ProviderError("rvc 미설치 또는 모델 없음")
+    _patch_edge()
+    base = TtsVoice(provider="edge-tts", voice=os.environ.get("RVC_BASE_VOICE", "ko-KR-SunHiNeural"), rate=v.rate, pitch="+0Hz")
+    src = decode_to_pcm(await asyncio.wait_for(_edge_once(base, text), timeout=6), 16000)
+    out = await RVC.ask({"wav": base64.b64encode(pcm_to_wav(src, 16000)).decode(), "model": name,
+                         "pitch": max(-12, min(12, _num(v.pitch, "Hz"))), "index_rate": 0.5})
+    return decode_to_pcm(out)
 
 
 async def tts_melo(v: TtsVoice, text: str) -> np.ndarray:
@@ -491,7 +535,7 @@ async def tts_typecast(v: TtsVoice, text: str) -> np.ndarray:
 
 
 TTS = {"edge-tts": tts_edge, "azure-tts": tts_azure, "melotts": tts_melo,
-       "elevenlabs": tts_elevenlabs, "openai-tts": tts_openai, "typecast": tts_typecast}
+       "elevenlabs": tts_elevenlabs, "openai-tts": tts_openai, "typecast": tts_typecast, "rvc": tts_rvc}
 
 # edge-tts에서 한국어를 읽는 다국어 음성(2026-10-16 목록 확인) — 외국어 억양이 섞일 수 있다
 EDGE_MULTI = ["en-US-AvaMultilingualNeural", "en-US-EmmaMultilingualNeural", "fr-FR-VivienneMultilingualNeural",
@@ -524,7 +568,7 @@ async def tts(req: TtsReq):
         t = time.perf_counter()
         try:
             # melotts는 첫 호출에 모델을 올려 오래 걸린다
-            pcm = await asyncio.wait_for(fn(v, text), timeout=180 if v.provider == "melotts" else 25)
+            pcm = await asyncio.wait_for(fn(v, text), timeout={"melotts": 180, "rvc": 90}.get(v.provider, 25))
         except Exception as e:  # 공급자 오류·시간 초과·edge-tts 내부 예외 등 — 다음 공급자로
             errors.append({"provider": v.provider, "error": _err_kind(e)})
             TTS_BROKEN[bkey(v)] = time.time() + TTS_COOLDOWN
@@ -543,6 +587,8 @@ async def voices(provider: str = "edge-tts"):
     global _TYPECAST_VOICES
     if provider == "azure-tts":
         return {"voices": [{"name": n, "gender": g, "label": l} for n, g, l in AZURE_KO]}
+    if provider == "rvc":
+        return {"voices": [{"name": n, "gender": "Female", "label": "RVC 모델(선희로 읽고 변환)"} for n in rvc_models()]}
     if provider == "typecast":
         key = os.environ.get("TYPECAST_API_KEY")
         if not key:
@@ -591,7 +637,7 @@ async def health():
             "last_error": WHISPER.last_error,
         },
         "gpu": gpu_mem(),
-        "tts": {"melotts": _melo_available()},
+        "tts": {"melotts": _melo_available(), "rvc": RVC.available() and bool(rvc_models()), "rvc_models": rvc_models()},
     }
 
 
@@ -619,6 +665,18 @@ async def warmup():
                 log.warning("melotts 예열 실패 %s", type(e).__name__)
         # 참조를 붙잡아 둔다(이벤트 루프는 약한 참조만 가져 작업이 도중에 수거될 수 있다)
         app.state.melo_warm = asyncio.get_running_loop().create_task(_warm_melo())
+    # RVC 작업 프로세스도 미리 띄운다(기본 모델 예열 포함) — rvc-venv와 모델이 있을 때만. SIDECAR_WARM_RVC=0이면 끔
+    if RVC.available() and rvc_models() and os.environ.get("SIDECAR_WARM_RVC", "1") != "0":
+        async def _warm_rvc() -> None:
+            try:
+                t = time.perf_counter()
+                async with RVC.lock:
+                    if RVC.proc is None or RVC.proc.returncode is not None:
+                        await RVC._start()
+                log.info("rvc 예열 %.1fs", time.perf_counter() - t)
+            except Exception as e:
+                log.warning("rvc 예열 실패 %s", type(e).__name__)
+        app.state.rvc_warm = asyncio.get_running_loop().create_task(_warm_rvc())
 
 
 if __name__ == "__main__":

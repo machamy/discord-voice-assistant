@@ -14,7 +14,8 @@
   디스코드 로그인(코드 완료, 클라이언트 비밀 등록 대기)·다국어 edge 목소리·Azure·Typecast(키 대기). 서브에이전트 리뷰 1회 + **Codex 교차검증 PASS**
   (gpt-5.6-sol xhigh, 완료조건 13개 — 32회차, 1~31회차 지적은 전부 수정·재배포: 판단 결과·무시·잊어줘·채널 이동 사이 경합을 호출 번호·세대·질문 줄로 막음). 보조 PC 배포.
   **판단 전용 모델(2026-10-16)**: OpenRouter 판단 모델 22종을 실측해 기본 판단 모델을 `jev`(Jev 1.14)로 바꿈 — 처음 보는 문장·깨진 받아쓰기 50개 중 49
-  (Groq는 32/40, 연달아 부르면 무료 한도로 실패), 0.41초, 회당 약 $0.00003. 봇 경유 재측정 48/50·0.36초. 일반 문장 72·실제 대화 350줄 재측정으로 기준 0.8(일반 문장 오탐 3/72), 판단 요청 원문 보기 추가. Codex 교차검증 PASS(gpt-5.6-sol xhigh, 완료조건 14개 — 5회차, 1·3·4회차 지적 전부 수정). 보조 PC 배포. 조사: [`docs/judge-stt-research-2026-10-16.md`](docs/judge-stt-research-2026-10-16.md).
+  (Groq는 32/40, 연달아 부르면 무료 한도로 실패), 0.41초, 회당 약 $0.00003. 봇 경유 재측정 48/50·0.36초. 일반 문장 72·실제 대화 350줄 재측정으로 기준 0.8(일반 문장 오탐 3/72), 판단 요청 원문 보기 추가. Codex 교차검증 PASS(gpt-5.6-sol xhigh, 완료조건 14개 — 5회차, 1·3·4회차 지적 전부 수정). 보조 PC 배포.
+  **테토·RVC 목소리·긴 호출어(2026-10-17)**: 테토 캐릭터(RVC 목소리, GTX 1060에서 문장당 약 2초), 클로드짱·아스트라짱·코덱스짱·지피티짱 호출어. Codex 교차검증 PASS(완료조건 10개 — 4회차, 1~3회차 지적 전부 수정). 보조 PC 배포. 조사: [`docs/judge-stt-research-2026-10-16.md`](docs/judge-stt-research-2026-10-16.md).
 - 스펙: [`SPEC.md`](SPEC.md) · 측정: [`poc/stt-bench/`](poc/stt-bench/README.md)(Zeroth CER 6.1%, FLEURS 5.1%, 지연 ~0.9초) · [`poc/voice-recv/`](poc/voice-recv/README.md)(DAVE 수신 통과)
 - 실행 위치: 보조 PC `DESKTOP-Bed`(192.168.0.30) `C:\Users\macham\voicebot\` — 음악봇과 같은 호스트, **다른 봇 계정·다른 프로세스**.
 - 포트: 웹 콘솔 `8694`(2026-10-15부터 방화벽 규칙 `voicebot-console-8694`가 NAS 터널 `192.168.0.9`만 허용 — LAN 평문 접속 차단, 외부 `https://voicebot.macham.net` — Cloudflare Access 이메일 OTP 뒤 + 디스코드 로그인(주인·허용 목록), 준비 전엔 콘솔 비밀번호),
@@ -34,6 +35,8 @@
 `data/state.json`(무시 목록·서버별 설정·사용량 — 대화 내용 없음), `data/voicebot.log`, `data/sidecar.log`, `sidecar/`(venv).
 
 ## 쓰는 법 (디스코드)
+
+캐릭터는 **클짱**(클로드짱)·**아짱**(아스트라짱·코덱스짱·지피티짱)·**테토**(카사네 테토 팬 캐릭터, RVC 목소리) 셋이다.
 
 음성 채널에 들어가서 `/들어와` → "클짱 오늘 저녁 뭐 먹지?"처럼 부르면, **음성으로 짧게** 답하고
 **지정 채널에 부른 사람을 멘션해서 길게** 올린다. "클짱!"만 부르고 멈추면 다음 말을 질문으로 듣는다.
@@ -61,7 +64,7 @@
 # 배포(PC): 빌드 → 복사 → 재기동
 cd bot; cargo build --release; cd ..
 scp bot\target\release\voicebot.exe deploy\start.ps1 aux-server:C:/Users/macham/voicebot/
-scp sidecar\app.py aux-server:C:/Users/macham/voicebot/sidecar/
+scp sidecar\app.py sidecar\rvc_worker.py aux-server:C:/Users/macham/voicebot/sidecar/
 ssh aux-server "powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\macham\voicebot\start.ps1"
 
 # 상태
@@ -94,6 +97,18 @@ ssh aux-server "Get-Content C:\Users\macham\voicebot\data\voicebot.log -Tail 30"
   웹에서 추가한 캐릭터만 고치기·삭제. 저장 위치는 `data/state.json`(`custom_characters`).
 - 목소리(SPEC F-58): 캐릭터 카드 **빠른 설정** 버튼(선희 귀엽게·아기처럼·차분하게, 엠마 발랄·아바 상냥 등 다국어 — 누르면 미리 듣기, 마음에 들면 저장).
   쇼츠에서 많이 쓰는 **Typecast** 목소리는 `TYPECAST_API_KEY`(유료, 무료 3만 크레딧)를 넣으면 카드에 목록이 뜬다. Azure 키(`AZURE_SPEECH_KEY`·`AZURE_SPEECH_REGION`, 월 50만 자 무료)를 넣으면 카드의 **Azure 목소리** 칸에서 서현(아이)·지민·유진 음성도 고를 수 있다(비우면 edge와 같은 음성).
+- RVC 목소리(SPEC F-60·F-61, 테토): 보조 PC `rvc-venv`(Python 3.11) + `rvc\applio`(Applio 3.6.5 추론 부분) + `models\rvc\teto\`(`.pth`·`.index`).
+  설치(보조 PC `C:\Users\macham\voicebot`에서):
+  ① `py -3.11 -m venv rvc-venv`
+  ② `rvc-venv\Scripts\python -m pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu126`(cu128은 GTX 1060 sm_61 미지원일 수 있음 — `torch.cuda.get_arch_list()`에 sm_61 확인)
+  ③ `rvc-venv\Scripts\python -m pip install numpy requests tqdm wget faiss-cpu librosa==0.11.0 scipy soundfile noisereduce pedalboard stftpitchshift soxr torchcrepe==0.0.24 torchfcpe==0.0.4 einops transformers==5.13.1 psutil`
+  ④ Applio 코드: `git clone https://github.com/IAHispano/Applio rvc\applio` → `git -C rvc\applio checkout 55fe0b976a6990bb75261c32ccecf6bfca3198f1`(v3.6.5),
+     `rvc\applio\assets\config_template.json`을 `config.json`으로 복사.
+  ⑤ 추론 자산: `rvc\applio\rvc\models\predictors\rmvpe.pt`·`rvc\applio\rvc\models\embedders\contentvec\`(Applio를 한 번 실행하면 받는 파일 — 이번에는 학습한 PC의 Applio에서
+     `rvc\models\pretraineds`만 빼고 복사했다). ⑥ 모델: `models\rvc\<이름>\*.pth`(+`*.index`).
+  사이드카가 시작할 때 모델을 미리 올린다. 웹 콘솔 캐릭터 카드 **RVC 목소리**에서 모델·높낮이(반음)를 고른다. 문장당 약 2초 더 걸린다.
+  **테토 음원 규약**: 비상업·개인(営利目的でない同人) 범위에서만 쓴다. 음성 합성 AI 학습은 개인으로 즐기는 범위만, 학습 결과물·음원 배포와 판매는 금지.
+  그래서 **모델 파일(`.pth`·`.index`)은 절대 커밋·공유하지 않는다**. 원본 백업은 본인 PC `D:\02_Workspace\voice-models\teto`.
 - 디스코드 로그인(SPEC F-57) 켜는 법: ① 디스코드 개발자 포털 → 앱 `클짱아짱` → OAuth2 → Redirects에 `https://voicebot.macham.net/auth/discord/callback` 추가
   ② 같은 화면의 Client Secret을 `deploy\set-key.ps1 DISCORD_CLIENT_SECRET`로 보조 PC `.env`에 넣기 ③ 웹 콘솔 재시작. 그 뒤로는 비밀번호 로그인이 꺼지고
   주인·`[web] allowed_users`만 들어온다.
